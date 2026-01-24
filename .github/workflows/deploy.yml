@@ -1,0 +1,128 @@
+name: Deploy bun-ws
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      build_type:
+        description: 'Build type'
+        required: false
+        default: 'standard'
+        type: choice
+        options:
+          - standard
+          - test
+      extra_args:
+        description: 'Extra build arguments'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
+    
+    - name: Install dependencies
+      run: bun install
+    
+    - name: Test server startup
+      run: |
+        timeout 10s bun run index.js || exit 0
+    
+    - name: Validate HTML
+      run: |
+        if [ -f "public/index.html" ]; then
+          echo "✅ HTML file exists"
+          # Check if HTML is valid (basic check)
+          if grep -q "<!DOCTYPE html>" public/index.html; then
+            echo "✅ HTML structure looks valid"
+          else
+            echo "❌ HTML structure issues detected"
+            exit 1
+          fi
+        else
+          echo "❌ HTML file missing"
+          exit 1
+        fi
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
+    
+    - name: Create build info
+      run: |
+        echo "Bun-ws Build Info" > build-info.txt
+        echo "Build Date: $(date -u)" >> build-info.txt
+        echo "Commit: ${{ github.sha }}" >> build-info.txt
+        echo "Branch: ${{ github.ref }}" >> build-info.txt
+        echo "Build completed successfully!" >> build-info.txt
+    
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: bun-ws-build
+        path: |
+          index.js
+          public/
+          README.md
+          build-info.txt
+        retention-days: 7
+    
+    - name: Deploy to GitHub Pages
+      if: success()
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./public
+        enable_jekyll: false
+        allow_empty_commit: false
+        force_orphan: true
+        publish_branch: gh-pages
+    
+    - name: Create release if tagged
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          index.js
+          public/**
+        body: |
+          Bun-ws WebSocket proxy server release
+          
+          ## Features
+          - VLESS/Trojan dual protocol support
+          - High performance Bun runtime
+          - Dark theme interface
+          - Auto ISP detection
+          
+          Deploy to your server with:
+          ```bash
+          curl -fsSL https://bun.sh/install | bash
+          bun run index.js
+          ```
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}

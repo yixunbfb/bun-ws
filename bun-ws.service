@@ -1,0 +1,55 @@
+# /etc/systemd/system/bun-ws.service
+[Unit]
+# 服务的描述，可以是任意你想取的名字
+Description=Bun-WS Service
+# 指定在哪个服务/目标之后启动，network.target 表示在网络服务启动后再启动
+After=network.target
+# 可选：如果你的服务依赖 docker.service 需要先启动
+# Requires=docker.service
+
+[Service]
+# 指定你的应用类型，simple 表示 ExecStart 指定的程序就是主进程
+Type=simple
+
+# 指定运行此服务的用户和用户组，为了安全，一般都建议用非 root 用户
+# 如果没有你想要的特定用户，可以先创建一个: sudo adduser bun-ws-user
+User=bun-ws-user
+Group=bun-ws-user
+
+# 定义环境变量。这里可以定义你的应用需要用到的所有环境变量。
+# 注意：如果你的 .env 文件在工作的目录下，Docker Compose 会自动读取它。
+# 但在此处为了更清晰，也可以手动指定环境变量，例如：Environment=PORT=8333
+# EnvironmentFile=/path/to/your/.env # 如果 service 文件需要读取额外的 .env，可以取消此行注释并提供文件路径
+
+# 指定服务的工作目录，这是**非常重要**的一点，所有相对路径都会基于此。
+# 把下面的 /path/to/your/bun-ws 替换成你项目代码在服务器上的绝对路径，例如：/home/bun-ws-user/bun-ws
+WorkingDirectory=/path/to/your/bun-ws
+
+# 核心：定义启动服务的命令
+ExecStart=/usr/local/bin/docker-compose up
+
+# 定义停止服务的命令
+ExecStop=/usr/local/bin/docker-compose down
+
+# 定义重启服务时的命令
+ExecReload=/usr/local/bin/docker-compose down && /usr/local/bin/docker-compose up
+
+# 重启策略，如果服务异常退出，systemd 会自动尝试重启
+Restart=always
+# RestartSec=10 # 重启前等待 10 秒，可以根据需要取消注释并调整
+
+# 限制重启频率，每 600 秒最多重启 100 次，避免无限循环崩溃
+StartLimitInterval=600
+StartLimitBurst=100
+
+# 指定标准输出和错误的日志文件，方便你查看应用的日志
+# 路径 /var/log/bun-ws/ 需要提前创建: sudo mkdir -p /var/log/bun-ws && sudo chown bun-ws-user:bun-ws-user /var/log/bun-ws
+# StandardOutput=append:/var/log/bun-ws/output.log
+# StandardError=append:/var/log/bun-ws/error.log
+
+# 可选：为了让 Docker Compose 能正常工作，有时需要将用户加入 docker 组
+# 例如: sudo usermod -aG docker bun-ws-user
+
+[Install]
+# 指定当系统进入多用户模式时启动此服务（类似于开机自启）
+WantedBy=multi-user.target

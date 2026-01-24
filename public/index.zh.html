@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>bun-ws | 高性能 WebSocket 代理服务器</title>
+    <meta name="description" content="基于 Bun 运行时的 VLESS/Trojan WebSocket 代理服务器">
+
+    <!-- 1. 导入后端注入的全局变量 -->
+    <script type="module">
+        try {
+            await import('./_inject_vars.html');
+        } catch (e) {
+            console.error("动态变量文件未找到，可能是服务未正确启动或首次加载。", e);
+            // 降级处理：如果后端没有正确注入，设置一个默认的 window.BACKEND_CONFIG 对象
+            window.BACKEND_CONFIG = {
+                UUID: '未知',
+                DOMAIN: '未知',
+                WSPATH: '/',
+                SUB_PATH: '/',
+                NAME: 'bun-ws'
+            };
+        }
+    </script>
+
+    <style>
+        :root {
+            --primary: #8b5cf6;
+            --primary-dark: #7c3aed;
+            --secondary: #06b6d4;
+            --dark: #050814;
+            --light: #f0f9ff;
+            --gray: #cbd5e1;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --card-bg: rgba(10, 15, 30, 0.95);
+            --glass-effect: blur(10px) saturate(180%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #000510 0%, #030712 100%);
+            background-image: 
+                radial-gradient(at 20% 20%, hsla(230, 83%, 8%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 80% 0%, hsla(279, 74%, 8%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 0% 50%, hsla(199, 93%, 5%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 80% 50%, hsla(315, 70%, 5%, 0.1) 0px, transparent 50%);
+            min-height: 100vh;
+            color: var(--light);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        nav {
+            background: rgba(5, 8, 20, 0.6);
+            backdrop-filter: var(--glass-effect);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: white;
+            text-decoration: none;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 1rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+
+        .nav-links a {
+            color: rgba(255, 255, 255, 0.9);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            color: white;
+        }
+
+        header {
+            padding: 4rem 0;
+            text-align: center;
+            color: white;
+            background: linear-gradient(200deg, rgba(0, 0, 0, 0.9) 0%, transparent 90%);
+        }
+
+        .hero {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #e0e7ff, #cbd5e1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            border-radius: 50px;
+            color: #34d399;
+            font-weight: 600;
+            margin-bottom: 2rem;
+            backdrop-filter: blur(5px);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .main-content {
+            padding: 4rem 0;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 4rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            backdrop-filter: var(--glass-effect);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .icon-vless { background: linear-gradient(45deg, #8b5cf6, #a78bfa); }
+        .icon-trojan { background: linear-gradient(45deg, #06b6d4, #22d3ee); }
+        .icon-config { background: linear-gradient(45deg, #10b981, #34d399); }
+        .icon-security { background: linear-gradient(45deg, #f59e0b, #fbbf24); }
+
+        .card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+            color: var(--light);
+        }
+
+        .card p {
+            color: var(--gray);
+            margin-bottom: 1rem;
+        }
+
+        .config-section {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            backdrop-filter: var(--glass-effect);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 4rem;
+        }
+
+        .config-section h2 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            color: var(--light);
+        }
+
+        .config-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .config-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .config-label {
+            font-weight: 600;
+            color: var(--primary);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .config-value {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            background: rgba(15, 23, 42, 0.6);
+            padding: 0.75rem;
+            border-radius: 6px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            font-size: 0.875rem;
+            word-break: break-all;
+            color: var(--light);
+        }
+
+        .subscription-section {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            backdrop-filter: var(--glass-effect);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .subscription-section h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--light);
+        }
+
+        .subscription-url {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            margin-bottom: 1rem;
+        }
+
+        .subscription-url code {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            color: var(--light);
+            word-break: break-all;
+        }
+
+        .copy-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background-color 0.3s ease;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .copy-btn.success {
+            background: var(--success);
+        }
+
+        footer {
+            background: rgba(0, 0, 0, 0.2);
+            color: rgba(255, 255, 255, 0.8);
+            padding: 3rem 0 1.5rem;
+            text-align: center;
+        }
+
+        .footer-content {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 1.5rem 0;
+        }
+
+        .footer-links a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .footer-links a:hover {
+            color: white;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+
+        .feature {
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .feature-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 0.5rem;
+            font-size: 1.25rem;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero p {
+                font-size: 1.1rem;
+            }
+
+            .nav-links {
+                display: none;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .config-info {
+                grid-template-columns: 1fr;
+            }
+
+            .btn-group {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 300px;
+                justify-content: center;
+            }
+        }
+    </style>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <nav>
+        <div class="container">
+            <div class="nav-content">
+                <a href="/" class="logo">
+                    <div class="logo-icon">BW</div>
+                    bun-ws
+                </a>
+                <div class="nav-links">
+                    <a href="#features">特性</a>
+                    <a href="#config">配置</a>
+                    <a href="#subscription">订阅</a>
+                    <a href="https://github.com/yixunbfb/bun-ws" target="_blank" style="display: flex; align-items: center; gap: 0.3rem;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                        GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <header>
+        <div class="container">
+            <div class="hero">
+                <div class="status-badge">
+                    <div class="status-dot"></div>
+                    服务器正在运行
+                </div>
+                <h1>高性能 WebSocket 代理</h1>
+                <p>基于 Bun 运行时的 VLESS/Trojan 双协议代理服务器，提供企业级安全保护和卓越性能</p>
+                <div class="btn-group">
+                    <a href="#config" class="btn btn-primary">
+                        🌈 查看配置
+                    </a>
+                    <a href="#subscription" class="btn btn-secondary">
+                        📱 获取订阅
+                    </a>
+                    <a href="https://github.com/yixunbfb/bun-ws" target="_blank" class="btn btn-secondary" style="border-color: rgba(255,255,255,0.4);">
+                        ⭐ GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div id="features" class="grid">
+                <div class="card">
+                    <div class="card-icon icon-vless">🌐</div>
+                    <h3>VLESS 协议</h3>
+                    <p>轻量级代理协议，无加密开销，提供高性能数据传输，支持 TCP/UDP 转发。</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon icon-trojan">🛡️</div>
+                    <h3>Trojan 协议</h3>
+                    <p>基于 TLS 的安全代理协议，使用密码验证，完美伪装正常 HTTPS 流量。</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon icon-config">⚙️</div>
+                    <h3>自动配置</h3>
+                    <p>智能 ISP 检测，自动生成订阅链接，环境变量驱动的配置系统。</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon icon-security">🔒</div>
+                    <h3>企业级安全</h3>
+                    <p>TLS 加密传输，身份验证保护，支持 IPv4/IPv6 双栈网络。</p>
+                </div>
+            </div>
+
+            <div id="config" class="config-section">
+                <h2>🚀 服务器配置信息</h2>
+                <div class="features">
+                    <div class="feature">
+                        <div class="feature-icon icon-vless">⚡</div>
+                        <div>高性能 Bun 运行时</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon icon-trojan">🌍</div>
+                        <div>全球 ISP 检测</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon icon-config">📊</div>
+                        <div>实时连接监控</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon icon-security">🔄</div>
+                        <div>自动故障恢复</div>
+                    </div>
+                </div>
+
+                <div class="config-info">
+                    <div class="config-item">
+                        <div class="config-label">服务器地址</div>
+                        <div class="config-value" id="server-address">localhost:8333</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">UUID (身份标识)</div>
+                        <div class="config-value" id="uuid">8ea48d91-eab2-4dfa-9169-859b0d43b3dc</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">WebSocket 路径</div>
+                        <div class="config-value" id="ws-path">/8ea48d91</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">订阅路径</div>
+                        <div class="config-value" id="sub-path">/8d91e</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">域名设置</div>
+                        <div class="config-value" id="domain">ws.bun-ws.com</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">ISP 信息</div>
+                        <div class="config-value" id="isp">检测中...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="subscription" class="subscription-section">
+                <h2>📱 客户端订阅链接</h2>
+                <p>使用以下订阅链接在代理客户端中添加服务器配置：</p>
+                <div class="subscription-url">
+                    <code id="subscription-url">http://localhost:8333/8d91e</code>
+                </div>
+                <button class="copy-btn" onclick="copySubscription()">
+                    📋 复制订阅链接
+                </button>
+                <p style="margin-top: 1rem; color: var(--gray); font-size: 0.875rem;">
+                    订阅内容包含 VLESS 和 Trojan 双协议配置，客户端会自动识别支持的协议。
+                </p>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <h3 style="margin-bottom: 1rem;">🎉 感谢使用 bun-ws</h3>
+                <p>轻量级、高性能的 WebSocket 代理服务器 | 基于 Bun 运行时构建</p>
+                <div class="footer-links">
+                    <a href="https://github.com/yixunbfb/bun-ws/wiki">文档</a>
+                    <a href="https://github.com/yixunbfb/bun-ws">GitHub</a>
+                    <a href="https://github.com/yixunbfb/bun-ws/discussions">社区</a>
+                    <a href="https://github.com/yixunbfb/bun-ws/issues">支持</a>
+                </div>
+                <p style="opacity: 0.7; margin-top: 1.5rem;">
+                    Made with ❤️ using Bun | Apache License 2.0
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // 获取当前主机信息
+        // 优化端口推断：如果端口为空，且协议是 https，则端口通常为 443
+        // 如果端口为空，且协议是 http，则端口通常为 80 (但在部署到 bun-ws 时，内部可能是 8333)
+        // 所以这里做以下处理：如果端口为空，我们尝试用 443 作为 TLS/HTTPS 的标准端口优先，开发环境下为 8333
+        const currentHost = window.location.hostname;
+        let currentPort = window.location.port;
+
+        // 如果当前端口为空，尝试根据协议或 HOST 名推断
+        if (!currentPort) {
+            if (window.location.protocol === 'https:') {
+                currentPort = '443';
+            } else if (currentHost === 'localhost' || currentHost.startsWith('127.')) {
+                currentPort = '8333'; // 假设本地开发时，端口是 8333
+            } else {
+                currentPort = '80'; // 生产环境假设标准 HTTP 端口，但实际映射可能不同。
+                                  // 此处的逻辑是为了显示给用户看的"实际访问端口"
+            }
+        }
+
+        const serverAddress = currentHost === 'localhost' ?
+            `localhost:${currentPort}` :
+            `${currentHost}:${currentPort}`;
+
+        // 更新配置信息
+        document.getElementById('server-address').textContent = serverAddress;
+
+        // 2. 从全局变量中获取注入的后端变量
+        // 这里的 window.BACKEND_CONFIG 是上面 <script type="module"> 注入的
+        const backendConfig = window.BACKEND_CONFIG || {
+            UUID: '8ea48d91-eab2-4dfa-9169-859b0d43b3dc',
+            DOMAIN: 'ws.bun-ws.com',
+            WSPATH: '/8ea48d91',
+            SUB_PATH: '/8d91e',
+            NAME: 'bun-ws'
+        };
+
+        const uuid = backendConfig.UUID;
+        const wsPath = backendConfig.WSPATH;
+        const subPath = backendConfig.SUB_PATH;
+        const domain = backendConfig.DOMAIN;
+
+        document.getElementById('uuid').textContent = uuid;
+        document.getElementById('ws-path').textContent = wsPath;
+        document.getElementById('sub-path').textContent = subPath;
+        document.getElementById('domain').textContent = domain;
+
+        // 更新订阅链接
+        // 重要：订阅链接的端口要和前端看到的实际端口一致
+        const subscriptionUrl = `${window.location.protocol}//${serverAddress}${subPath}`;
+        document.getElementById('subscription-url').textContent = subscriptionUrl;
+
+        // 3. ISP 通过 API 轮询获取
+        function fetchAndUpdateISP() {
+            fetch('/api/isp')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    document.getElementById('isp').textContent = data.isp || 'Unknown';
+                })
+                .catch(error => {
+                    console.warn('获取ISP信息失败:', error);
+                    document.getElementById('isp').textContent = '检测失败';
+                    // 如果API失败，可以设置一个超时后重试
+                    // setTimeout(fetchAndUpdateISP, 5000);
+                });
+        }
+        setTimeout(fetchAndUpdateISP, 1000); // 页面加载1秒后尝试获取
+
+        // 复制订阅链接功能
+        async function copySubscription() {
+            const subscriptionText = document.getElementById('subscription-url').textContent;
+            
+            try {
+                await navigator.clipboard.writeText(subscriptionText);
+                const copyBtn = document.querySelector('.copy-btn');
+                const originalText = copyBtn.innerHTML;
+                copyBtn.innerHTML = '✅ 已复制!';
+                copyBtn.classList.add('success');
+                
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalText;
+                    copyBtn.classList.remove('success');
+                }, 2000);
+            } catch (err) {
+                // 降级到传统复制方法
+                const textArea = document.createElement('textarea');
+                textArea.value = subscriptionText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                
+                const copyBtn = document.querySelector('.copy-btn');
+                const originalText = copyBtn.innerHTML;
+                copyBtn.innerHTML = '✅ 已复制!';
+                copyBtn.classList.add('success');
+                
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalText;
+                    copyBtn.classList.remove('success');
+                }, 2000);
+            }
+        }
+
+        // 平滑滚动
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+
+        
+
+
+        // 导航栏滚动效果
+        window.addEventListener('scroll', () => {
+            const nav = document.querySelector('nav');
+            if (window.scrollY > 100) {
+                nav.style.background = 'rgba(5, 8, 20, 0.8)';
+                nav.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.5)';
+            } else {
+                nav.style.background = 'rgba(5, 8, 20, 0.6)';
+                nav.style.boxShadow = 'none';
+            }
+        });
+
+
+
+
+        // 页面加载动画
+        document.addEventListener('DOMContentLoaded', () => {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(30px)';
+                
+                setTimeout(() => {
+                    card.style.transition = 'all 0.6s ease';
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(0)';
+                }, 200 + index * 100);
+            });
+        });
+    </script>
+</body>
+</html>

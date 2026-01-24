@@ -1,0 +1,48 @@
+# e:/NewCode/bun-ws/docker-compose.yml
+
+version: '3.8' # Docker Compose file version
+
+services:
+  # Define a service named 'bun-ws-service'
+  bun-ws-service:
+    # 1. Use an existing public image
+    image: ghcr.io/yixunbfb/bun-ws:latest
+
+    # 2. Container name (optional, but recommended for easier identification)
+    container_name: bun-ws-container
+
+    # 3. Port mapping (host_port:container_port)
+    # This will map the host's port 4433 to the container's internal port 8333.
+    # You can adjust the host port as needed (e.g., 443).
+    # The internal container port must be consistent with the PORT environment variable in index.js or its default value (8333).
+    ports:
+      - "4433:8333"
+
+    # 4. Environment Variables
+    # There are two ways to set environment variables:
+    #  a. Define directly here (not recommended for sensitive information or a large number of variables)
+    #  b. Through a .env file (highly recommended)
+    # Here we will use a .env file to manage all environment variables.
+    # If you want certain variables to apply only to this compose instance, you can also add them here;
+    # they will be merged with those from the .env file.
+    env_file:
+      - .env # Specify the .env file to load
+
+    # 5. Restart policy (optional)
+    # If the container exits due to an error, it will restart automatically.
+    # This is generally useful for both production and development environments.
+    restart: unless-stopped
+
+    # 6. Dependencies on other services (if any, e.g., a database)
+    # depends_on:
+    #   - some-database-service
+
+    # 7. Volumes
+    # (Optional) If you wish to mount certain files or directories into the container for data persistence or real-time code synchronization.
+    # Usually not required for the web server itself, as the code is already built into the image.
+    # The following is an example if you want to mount a configuration directory from the host into the container (if needed):
+    # volumes:
+    #   - ./my-custom-configs:/app/configs:ro
+    # :ro indicates read-only
+
+# If there are standalone volumes or networks that need to be defined here (for a single service, compose usually creates a default network automatically)
