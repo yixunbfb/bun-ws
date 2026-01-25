@@ -1,10 +1,49 @@
+// Utility functions for DOM selection
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => document.querySelectorAll(selector);
+
+// Helper function to update all configuration elements
+function updateConfigElements(backendConfig) {
+    $('#uuid').textContent = backendConfig.UUID || 'Unknown';
+    $('#ws-path').textContent = backendConfig.WSPATH || '/';
+    $('#sub-path').textContent = backendConfig.SUB_PATH || '/';
+    $('#domain').textContent = backendConfig.DOMAIN || 'Unknown';
+    $('#backend-port').textContent = backendConfig.PORT || 'Unknown';
+    $('#isp').textContent = backendConfig.isp || 'Unknown';
+}
+
+// Helper function to set all elements to error state
+function setErrorState(errorMessage) {
+    $('#uuid').textContent = 'API Error';
+    $('#ws-path').textContent = 'API Error';
+    $('#sub-path').textContent = 'API Error';
+    $('#domain').textContent = 'API Error';
+    $('#backend-port').textContent = 'API Error';
+    $('#isp').textContent = 'API Error';
+    if (errorMessage) {
+        $('#subscription-url').textContent = errorMessage;
+    }
+}
+
+// Helper function to update server status
+function updateServerStatus(isRunning) {
+    const statusElement = $('#server-status');
+    if (isRunning) {
+        statusElement.innerHTML = '<div class="status-dot"></div>Server Running';
+        statusElement.classList.remove('unknown');
+    } else {
+        statusElement.innerHTML = '<div class="status-dot"></div>Server Unknown';
+        statusElement.classList.add('unknown');
+    }
+}
+
 // Get current host information (moved into getCurrentServerAddress())
 // Optimize port inference: if the port is empty, and the protocol is https, the port is usually 443
 // If the port is empty, and the protocol is http, the port is usually 80 (but when deployed to bun-ws, the internal port might be 8333)
 // So do the following: if the port is empty, we try to use 443 as the TLS/HTTPS standard port, and 8333 for development.
 
 // Update config information using the getCurrentServerAddress() helper
-document.getElementById('server-address').textContent = getCurrentServerAddress();
+$('#server-address').textContent = getCurrentServerAddress();
 
 // 2. Function to fetch backend configuration from API
 // We need to derive the SUB_PATH for the API endpoint itself.
@@ -34,20 +73,17 @@ async function fetchBackendConfig() {
         const backendConfig = await response.json();
         
         // Update DOM elements with the fetched config
-        document.getElementById('uuid').textContent = backendConfig.UUID || 'Unknown';
-        document.getElementById('ws-path').textContent = backendConfig.WSPATH || '/';
-        document.getElementById('sub-path').textContent = backendConfig.SUB_PATH || '/';
-        document.getElementById('domain').textContent = backendConfig.DOMAIN || 'Unknown';
-
+        updateConfigElements(backendConfig);
+        
         // Return the config for use in other parts of the script, e.g., subscriptionUrl
         return backendConfig;
     } catch (error) {
         console.error('Error fetching backend configuration:', error);
         // If API fails, display fallback/default values
-        document.getElementById('uuid').textContent = 'API Error';
-        document.getElementById('ws-path').textContent = 'API Error';
-        document.getElementById('sub-path').textContent = 'API Error';
-        document.getElementById('domain').textContent = 'API Error';
+        setErrorState();
+        
+        // Update server status to unknown (orange)
+        updateServerStatus(false);
         
         // Throw the error so that subscriptionUrl generation can also handle it if needed
         throw error; 
@@ -59,27 +95,28 @@ fetchBackendConfig()
     .then(backendConfig => {
         // If fetch was successful, backendConfig will hold the data
         // Update ISP from the config fetched
-        document.getElementById('isp').textContent = backendConfig.isp || 'Unknown';
+        $('#isp').textContent = backendConfig.isp || 'Unknown';
 
         // Update Backend Port from the config fetched
-        document.getElementById('backend-port').textContent = backendConfig.PORT || 'Unknown';
+        $('#backend-port').textContent = backendConfig.PORT || 'Unknown';
         
         // Re-generate subscriptionUrl using the fetched config data
         const serverAddress = getCurrentServerAddress(); // Assuming getCurrentServerAddress() correctly determines address/port
         const subscriptionPathFromApi = backendConfig.SUB_PATH;
         const subscriptionUrl = `${window.location.protocol}//${serverAddress}/${subscriptionPathFromApi}`;
-        document.getElementById('subscription-url').textContent = subscriptionUrl;
+        $('#subscription-url').textContent = subscriptionUrl;
         
         // Log success
         // console.log('Backend config loaded successfully:', backendConfig);
+
+        // Update server status to running (green) as API call was successful
+        updateServerStatus(true);
     })
     .catch(error => {
         // If fetch failed, the catch block inside fetchBackendConfig already displayed error messages for basic config items.
         // Here, we can set a fallback subscription URL or an error message
         const serverAddress = getCurrentServerAddress(); // Assuming getCurrentServerAddress() correctly determines address/port for fallback
-        document.getElementById('subscription-url').textContent = `API Error: Cannot load subscription URL from ${configApiUrl}`;
-        document.getElementById('isp').textContent = 'API Error'; // Also indicate ISP fetch failed
-        document.getElementById('backend-port').textContent = 'API Error'; // Also indicate backend port fetch failed
+        setErrorState(`API Error: Cannot load subscription URL from ${configApiUrl}`);
         console.error('Failed to setup subscription URL and ISP due to config fetch error:', error);
     });
 
@@ -106,11 +143,11 @@ function getCurrentServerAddress() {
 
 // Copy subscription link functionality
 async function copySubscription() {
-    const subscriptionText = document.getElementById('subscription-url').textContent;
+    const subscriptionText = $('#subscription-url').textContent;
     
     try {
         await navigator.clipboard.writeText(subscriptionText);
-        const copyBtn = document.querySelector('.copy-btn');
+        const copyBtn = $('.copy-btn');
         const originalText = copyBtn.innerHTML;
         copyBtn.innerHTML = '✅ Copied!';
         copyBtn.classList.add('success');
@@ -128,7 +165,7 @@ async function copySubscription() {
         document.execCommand('copy');
         document.body.removeChild(textArea);
         
-        const copyBtn = document.querySelector('.copy-btn');
+        const copyBtn = $('.copy-btn');
         const originalText = copyBtn.innerHTML;
         copyBtn.innerHTML = '✅ Copied!';
         copyBtn.classList.add('success');
@@ -141,11 +178,11 @@ async function copySubscription() {
 }
 
 // Smooth scrolling for anchor links
-document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+$$('a[href^="#"]').forEach(anchor => {
     anchor.addEventListener('click', function (e) {
         e.preventDefault();
         const targetId = this.getAttribute('href');
-        const targetElement = document.querySelector(targetId);
+        const targetElement = $(targetId);
         if (targetElement) {
             targetElement.scrollIntoView({
                 behavior: 'smooth'
@@ -155,7 +192,7 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
 });
 
 // Click subscription link card to open subscription page/section
-const subscriptionCard = document.querySelector('.subscription-section');
+const subscriptionCard = $('.subscription-section');
 if (subscriptionCard) {
     subscriptionCard.addEventListener('click', (e) => {
         // If clicking on the subscription-url itself or the copy button, do nothing to maintain its original functionality
@@ -174,7 +211,7 @@ if (subscriptionCard) {
 }
 
 // Make the subscription URL itself clickable to open the link
-const subscriptionUrlElement = document.getElementById('subscription-url');
+const subscriptionUrlElement = $('#subscription-url');
 if (subscriptionUrlElement) {
     subscriptionUrlElement.style.cursor = 'pointer'; // Add cursor style to indicate it's clickable
     subscriptionUrlElement.addEventListener('click', (e) => {
@@ -189,7 +226,7 @@ if (subscriptionUrlElement) {
 
 // Navigation bar scroll effect
 window.addEventListener('scroll', () => {
-    const nav = document.querySelector('nav');
+    const nav = $('nav');
     if (window.scrollY > 100) {
         nav.style.background = 'rgba(5, 8, 20, 0.8)';
         nav.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.5)';
@@ -201,7 +238,7 @@ window.addEventListener('scroll', () => {
 
 // 4. Function for manual config loading
 async function loadConfigFromInput() {
-    const inputField = document.getElementById('manual-sub-path');
+    const inputField = $('#manual-sub-path');
     const userInputSubPath = inputField.value.trim();
 
     if (!userInputSubPath) {
@@ -212,49 +249,45 @@ async function loadConfigFromInput() {
     const configApiUrl = `/${userInputSubPath}-json`;
     
     // Display a loading state
-    document.getElementById('uuid').textContent = 'Loading...';
-    document.getElementById('ws-path').textContent = 'Loading...';
-    document.getElementById('sub-path').textContent = 'Loading...';
-    document.getElementById('domain').textContent = 'Loading...';
-    document.getElementById('backend-port').textContent = 'Loading...';
-    document.getElementById('isp').textContent = 'Loading...';
-    document.getElementById('subscription-url').textContent = `Loading for ${configApiUrl}...`;
+    $('#uuid').textContent = 'Loading...';
+    $('#ws-path').textContent = 'Loading...';
+    $('#sub-path').textContent = 'Loading...';
+    $('#domain').textContent = 'Loading...';
+    $('#backend-port').textContent = 'Loading...';
+    $('#isp').textContent = 'Loading...';
+    $('#subscription-url').textContent = `Loading for ${configApiUrl}...`;
 
     try {
         const response = await fetch(configApiUrl);
 
         if (!response.ok) {
+            updateServerStatus(false);
             if (response.status === 404) {
+                // Update server status to unknown (orange) before throwing error
                 throw new Error(`Failed to fetch config from ${configApiUrl}! Status: ${response.status}. Please check if the Subscription Path is correct.`);
             }
+            // Update server status to unknown (orange) before throwing error
+            // updateServerStatus(false);
             throw new Error(`Failed to fetch config from ${configApiUrl}! status: ${response.status}`);
         }
 
         const backendConfig = await response.json();
 
         // Update DOM elements with the fetched config
-        document.getElementById('uuid').textContent = backendConfig.UUID || 'Unknown';
-        document.getElementById('ws-path').textContent = backendConfig.WSPATH || '/';
-        document.getElementById('sub-path').textContent = backendConfig.SUB_PATH || '/';
-        document.getElementById('domain').textContent = backendConfig.DOMAIN || 'Unknown';
-        document.getElementById('backend-port').textContent = backendConfig.PORT || 'Unknown';
-        document.getElementById('isp').textContent = backendConfig.isp || 'Unknown';
+        updateConfigElements(backendConfig);
 
         // Update subscription link
         const serverAddress = getCurrentServerAddress();
         const subscriptionUrl = `${window.location.protocol}//${serverAddress}/${backendConfig.SUB_PATH}`;
-        document.getElementById('subscription-url').textContent = subscriptionUrl;
+        $('#subscription-url').textContent = subscriptionUrl;
+
+        // Update server status to running (green) as API call was successful
+        updateServerStatus(true);
         
         console.log('Config loaded successfully from manual input:', backendConfig);
     } catch (error) {
         console.error('Error loading config from manual input:', error);
-        document.getElementById('uuid').textContent = 'API Error';
-        document.getElementById('ws-path').textContent = 'API Error';
-        document.getElementById('sub-path').textContent = 'API Error';
-        document.getElementById('domain').textContent = 'API Error';
-        document.getElementById('backend-port').textContent = 'API Error';
-        document.getElementById('isp').textContent = 'API Error';
-        document.getElementById('subscription-url').textContent = `Error for ${configApiUrl}`;
+        setErrorState(`Error for ${configApiUrl}`);
         
         // Alert user about the error for immediate feedback
         alert(error.message);
@@ -263,7 +296,7 @@ async function loadConfigFromInput() {
 
 // Page load animation
 document.addEventListener('DOMContentLoaded', () => {
-    const cards = document.querySelectorAll('.card');
+    const cards = $$('.card');
     cards.forEach((card, index) => {
         card.style.opacity = '0';
         card.style.transform = 'translateY(30px)';

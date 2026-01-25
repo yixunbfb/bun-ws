@@ -134,12 +134,22 @@ header {
     backdrop-filter: blur(5px);
 }
 
+.status-badge.unknown {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;
     background: var(--success);
     border-radius: 50%;
     animation: pulse 2s infinite;
+}
+
+.status-badge.unknown .status-dot {
+    background: var(--warning);
 }
 
 @keyframes pulse {

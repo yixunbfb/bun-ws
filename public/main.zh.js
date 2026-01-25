@@ -1,10 +1,49 @@
+// 添加简化的选择器助手函数
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => document.querySelectorAll(selector);
+
+// Helper function to update all configuration elements
+function updateConfigElements(backendConfig) {
+    $('#uuid').textContent = backendConfig.UUID || '未知';
+    $('#ws-path').textContent = backendConfig.WSPATH || '/';
+    $('#sub-path').textContent = backendConfig.SUB_PATH || '/';
+    $('#domain').textContent = backendConfig.DOMAIN || '未知';
+    $('#backend-port').textContent = backendConfig.PORT || '未知';
+    $('#isp').textContent = backendConfig.isp || '未知';
+}
+
+// Helper function to set all elements to error state
+function setErrorState(errorMessage) {
+    $('#uuid').textContent = 'API 错误';
+    $('#ws-path').textContent = 'API 错误';
+    $('#sub-path').textContent = 'API 错误';
+    $('#domain').textContent = 'API 错误';
+    $('#backend-port').textContent = 'API 错误';
+    $('#isp').textContent = 'API 错误';
+    if (errorMessage) {
+        $('#subscription-url').textContent = errorMessage;
+    }
+}
+
+// Helper function to update server status
+function updateServerStatus(isRunning) {
+    const statusElement = $('#server-status');
+    if (isRunning) {
+        statusElement.innerHTML = '<div class="status-dot"></div>服务器运行中';
+        statusElement.classList.remove('unknown');
+    } else {
+        statusElement.innerHTML = '<div class="status-dot"></div>服务器未知';
+        statusElement.classList.add('unknown');
+    }
+}
+
 // Get current host information (moved into getCurrentServerAddress())
 // Optimize port inference: if the port is empty, and the protocol is https, the port is usually 443
 // If the port is empty, and the protocol is http, the port is usually 80 (but when deployed to bun-ws, the internal port might be 8333)
 // So do the following: if the port is empty, we try to use 443 as the TLS/HTTPS standard port, and 8333 for development.
 
 // Update config information using the getCurrentServerAddress() helper
-document.getElementById('server-address').textContent = getCurrentServerAddress();
+$('#server-address').textContent = getCurrentServerAddress();
 
 // 2. Function to fetch backend configuration from API
 // We need to derive the SUB_PATH for the API endpoint itself.
@@ -34,20 +73,17 @@ async function fetchBackendConfig() {
         const backendConfig = await response.json();
         
         // Update DOM elements with the fetched config
-        document.getElementById('uuid').textContent = backendConfig.UUID || '未知';
-        document.getElementById('ws-path').textContent = backendConfig.WSPATH || '/';
-        document.getElementById('sub-path').textContent = backendConfig.SUB_PATH || '/';
-        document.getElementById('domain').textContent = backendConfig.DOMAIN || '未知';
+        updateConfigElements(backendConfig); 
 
         // Return the config for use in other parts of the script, e.g., subscriptionUrl
         return backendConfig;
     } catch (error) {
         console.error('获取后端配置时出错:', error);
         // If API fails, display fallback/default values
-        document.getElementById('uuid').textContent = 'API 错误';
-        document.getElementById('ws-path').textContent = 'API 错误';
-        document.getElementById('sub-path').textContent = 'API 错误';
-        document.getElementById('domain').textContent = 'API 错误';
+        setErrorState();
+        
+        // Update server status to unknown (orange)
+        updateServerStatus(false);
         
         // Throw the error so that subscriptionUrl generation can also handle it if needed
         throw error; 
@@ -67,53 +103,17 @@ fetchBackendConfig().then(backendConfig => {
     // We only generate/update the subscription URL when backendConfig is received successfully.
     // If backendConfig fails, we will not update the URL and it will show the default hardcoded one or previous error state.
     updateSubscriptionUrl(backendConfig); 
+
+    // Update server status to running (green) as API call was successful
+    updateServerStatus(true);
     
-    // 4. Fetch ISP information (GetISP)
-    // This is another API call, but since the dependency is mainly on fetching the config,
-    // We can place it here to fetch and display the ISP information.
-    fetch(`/isp-info`) // Assuming ISP info is also available via an API endpoint
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`获取 ISP 信息失败！状态: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(ispData => {
-            // 优先显示详细地理位置信息
-            let displayInfo = ispData.country || '';
-            if (ispData.region) {
-                displayInfo += displayInfo ? `-${ispData.region}` : ispData.region;
-            }
-            if (ispData.city) {
-                displayInfo += displayInfo ? `-${ispData.city}` : ispData.city;
-            }
-            // 如果获取了 ISP 名称，并且不是 "Unknown"，才附加
-            if (ispData.isp && ispData.isp !== 'Unknown') {
-                displayInfo += displayInfo ? ` (${ispData.isp})` : ispData.isp;
-            }
-            
-            // 处理可能的 "null" 字符串 (虽然后端应该返回 null，但这里防御性处理)
-            displayInfo = displayInfo.replace(/-null/g, '').replace(/null-/g, '').replace(/null/g, '');
-            
-            // 如果没有任何有效信息，则保留 "检测中..."
-            document.getElementById('isp').textContent = displayInfo || '检测中...';
-        })
-        .catch(error => {
-            console.error('获取 ISP 信息时出错:', error);
-            document.getElementById('isp').textContent = '获取失败';
-        });
+    
 }).catch(error => {
     // 如果在 fetchBackendConfig 或 updateSubscriptionUrl 中发生错误，会在这里捕获
     console.error('初始化配置时出错:', error);
     
-    // 设置默认的 API 错误显示
-    document.getElementById('uuid').textContent = 'API 错误';
-    document.getElementById('ws-path').textContent = 'API 错误';
-    document.getElementById('sub-path').textContent = 'API 错误';
-    document.getElementById('domain').textContent = 'API 错误';
-    document.getElementById('backend-port').textContent = 'API 错误';
-    document.getElementById('isp').textContent = 'API 错误';
-    document.getElementById('subscription-url').textContent = '配置获取失败';
+        // 设置默认的 API 错误显示
+        setErrorState('配置获取失败');
 });
 
 // Get current server address function
@@ -165,7 +165,7 @@ async function copySubscription() {
     
     try {
         await navigator.clipboard.writeText(subscriptionText);
-        const copyBtn = document.querySelector('.copy-btn');
+        const copyBtn = $('.copy-btn');
         const originalText = copyBtn.innerHTML;
         copyBtn.innerHTML = '✅ 已复制!';
         copyBtn.classList.add('success');
@@ -183,7 +183,7 @@ async function copySubscription() {
         document.execCommand('copy');
         document.body.removeChild(textArea);
         
-        const copyBtn = document.querySelector('.copy-btn');
+        const copyBtn = $('.copy-btn');
         const originalText = copyBtn.innerHTML;
         copyBtn.innerHTML = '✅ 已复制!';
         copyBtn.classList.add('success');
@@ -196,11 +196,11 @@ async function copySubscription() {
 }
 
 // Smooth scrolling for anchor links
-document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+$$('a[href^="#"]').forEach(anchor => {
     anchor.addEventListener('click', function (e) {
         e.preventDefault();
         const targetId = this.getAttribute('href');
-        const targetElement = document.querySelector(targetId);
+        const targetElement = $(targetId);
         if (targetElement) {
             targetElement.scrollIntoView({
                 behavior: 'smooth'
@@ -210,10 +210,10 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
 });
 
 // Click subscription link card to open subscription page/section
-const subscriptionCard = document.querySelector('.subscription-section');
+const subscriptionCard = $('.subscription-section');
 if (subscriptionCard) {
     subscriptionCard.addEventListener('click', function() {
-        const subscriptionSection = document.getElementById('subscription');
+        const subscriptionSection = $('#subscription');
         if (subscriptionSection) {
             subscriptionSection.scrollIntoView({
                 behavior: 'smooth'
@@ -222,59 +222,9 @@ if (subscriptionCard) {
     });
 }
 
-// Click backend port to refresh ISP info
-document.addEventListener('DOMContentLoaded', () => {
-    const backendPortElement = document.getElementById('backend-port');
-    if (backendPortElement) {
-        backendPortElement.style.cursor = 'pointer';
-        backendPortElement.title = '点击刷新 ISP 信息';
-        
-        backendPortElement.addEventListener('click', async () => {
-            backendPortElement.textContent = '刷新中...';
-            const serverAddress = getCurrentServerAddress();
-            
-            // 优先从后端 API 获取 ISP 信息
-            try {
-                const response = await fetch(`/isp-info`);
-                if (!response.ok) {
-                    throw new Error(`获取 ISP 信息失败！状态: ${response.status}`);
-                }
-                const ispData = await response.json();
-
-                let displayInfo = ispData.country || '';
-                if (ispData.region) {
-                    displayInfo += displayInfo ? `-${ispData.region}` : ispData.region;
-                }
-                if (ispData.city) {
-                    displayInfo += displayInfo ? `-${ispData.city}` : ispData.city;
-                }
-                
-                // 如果获取了 ISP 名称，并且不是 "Unknown"，才附加
-                if (ispData.isp && ispData.isp !== 'Unknown') {
-                    displayInfo += displayInfo ? ` (${ispData.isp})` : ispData.isp;
-                }
-                
-                // 处理可能的 "null" 字符串
-                displayInfo = displayInfo.replace(/-null/g, '').replace(/null-/g, '').replace(/null/g, '');
-
-                backendPortElement.textContent = displayInfo || '未知位置';
-                console.log('ISP 信息刷新成功:', displayInfo);
-            } catch (error) {
-                console.error('刷新 ISP 信息时出错:', error);
-                backendPortElement.textContent = '刷新失败';
-                
-                // 3 秒后恢复默认状态
-                setTimeout(() => {
-                    backendPortElement.textContent = '...';
-                }, 3000);
-            }
-        });
-    }
-});
-
 // Manual config load functionality
 async function loadConfigFromInput() {
-    const inputField = document.getElementById('manual-sub-path');
+    const inputField = $('#manual-sub-path');
     const userInputSubPath = inputField.value.trim();
 
     if (!userInputSubPath) {
@@ -285,49 +235,45 @@ async function loadConfigFromInput() {
     const configApiUrl = `/${userInputSubPath}-json`;
     
     // Display a loading state
-    document.getElementById('uuid').textContent = '加载中...';
-    document.getElementById('ws-path').textContent = '加载中...';
-    document.getElementById('sub-path').textContent = '加载中...';
-    document.getElementById('domain').textContent = '加载中...';
-    document.getElementById('backend-port').textContent = '加载中...';
-    document.getElementById('isp').textContent = '加载中...';
-    document.getElementById('subscription-url').textContent = `正在加载 ${configApiUrl}...`;
+    $('#uuid').textContent = '加载中...';
+    $('#ws-path').textContent = '加载中...';
+    $('#sub-path').textContent = '加载中...';
+    $('#domain').textContent = '加载中...';
+    $('#backend-port').textContent = '加载中...';
+    $('#isp').textContent = '加载中...';
+    $('#subscription-url').textContent = `正在加载 ${configApiUrl}...`;
 
     try {
         const response = await fetch(configApiUrl);
 
         if (!response.ok) {
             if (response.status === 404) {
+                // API 调用失败，更新服务器状态为未知 (橙色)，然后再抛出错误
+                updateServerStatus(false);
                 throw new Error(`无法从 ${configApiUrl} 获取配置！状态: ${response.status}。请检查订阅路径是否正确。`);
             }
+            // API 调用失败，更新服务器状态为未知 (橙色)，然后再抛出错误
+            updateServerStatus(false);
             throw new Error(`无法从 ${configApiUrl} 获取配置！状态: ${response.status}`);
         }
 
         const backendConfig = await response.json();
 
         // Update DOM elements with the fetched config
-        document.getElementById('uuid').textContent = backendConfig.UUID || '未知';
-        document.getElementById('ws-path').textContent = backendConfig.WSPATH || '/';
-        document.getElementById('sub-path').textContent = backendConfig.SUB_PATH || '/';
-        document.getElementById('domain').textContent = backendConfig.DOMAIN || '未知';
-        document.getElementById('backend-port').textContent = backendConfig.PORT || '未知';
-        document.getElementById('isp').textContent = backendConfig.isp || '未知';
+        updateConfigElements(backendConfig);
 
         // Update subscription link
         const serverAddress = getCurrentServerAddress();
         const subscriptionUrl = `${window.location.protocol}//${serverAddress}/${backendConfig.SUB_PATH}`;
-        document.getElementById('subscription-url').textContent = subscriptionUrl;
+        $('#subscription-url').textContent = subscriptionUrl;
+        
+        // Update server status to running (green) as API call was successful
+        updateServerStatus(true);
         
         console.log('配置加载成功:', backendConfig);
     } catch (error) {
         console.error('加载配置时出错:', error);
-        document.getElementById('uuid').textContent = 'API 错误';
-        document.getElementById('ws-path').textContent = 'API 错误';
-        document.getElementById('sub-path').textContent = 'API 错误';
-        document.getElementById('domain').textContent = 'API 错误';
-        document.getElementById('backend-port').textContent = 'API 错误';
-        document.getElementById('isp').textContent = 'API 错误';
-        document.getElementById('subscription-url').textContent = `错误: ${configApiUrl}`;
+        setErrorState(`错误: ${configApiUrl}`);
         
         // Alert user about the error for immediate feedback
         alert(error.message);
@@ -336,7 +282,7 @@ async function loadConfigFromInput() {
 
 // Page load animation
 document.addEventListener('DOMContentLoaded', () => {
-    const cards = document.querySelectorAll('.card');
+    const cards = $$('.card');
     cards.forEach((card, index) => {
         card.style.opacity = '0';
         card.style.transform = 'translateY(30px)';
