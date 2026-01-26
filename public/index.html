@@ -1,189 +1,76 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>bun-ws | High Performance WebSocket Proxy Server</title>
-    <meta name="description" content="VLESS/Trojan WebSocket Proxy Server based on Bun Runtime">
-
-
+    <title>bun-ws AI Chat</title>
     <link rel="stylesheet" href="/styles.css">
+</head>
 <body>
-    <nav>
-        <div class="container">
-            <div class="nav-content">
-                <a href="/" class="logo">
-                    <div class="logo-icon">BW</div>
-                    bun-ws
-                </a>
-                <div class="nav-links">
-                    <a href="#features">Features</a>
-                    <a href="#config">Config</a>
-                    <a href="#subscription">Subscription</a>
-                    <a href="https://github.com/yixunbfb/bun-ws" target="_blank" style="display: flex; align-items: center; gap: 0.3rem;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                        </svg>
-                        GitHub
-                    </a>
+    <header class="chat-header">
+        <div class="chat-header-content">
+            <h1>bun-ws AI Chat</h1>
+            <div class="header-actions">
+                <div class="theme-toggle">
+                    <button class="theme-toggle-btn" id="theme-toggle" aria-label="Toggle theme">
+                        <span class="theme-icon">🌙</span>
+                    </button>
                 </div>
-            </div>
-        </div>
-    </nav>
-
-    <header>
-        <div class="container">
-            <div class="hero">
-        <div class="status-badge" id="server-status">
-            <div class="status-dot"></div>
-            Server Running
-        </div>
-        <h1>High Performance WebSocket Proxy</h1>
-        <p>VLESS/Trojan dual-protocol proxy server based on Bun runtime, providing enterprise-level security protection and superior performance</p>
-        <div class="btn-group">
-            <a href="#config" class="btn btn-primary">
-                🌈 View Config
-            </a>
-            <a href="#subscription" class="btn btn-secondary">
-                📱 Get Subscription
-            </a>
-            <a href="https://github.com/yixunbfb/bun-ws" target="_blank" class="btn btn-secondary" style="border-color: rgba(255,255,255,0.4);">
-                ⭐ GitHub
-            </a>
-        </div>
+                <span class="api-key-status" id="api-key-status">
+                    <span class="dot not-configured"></span>
+                    <span id="api-key-status-text">API Key Not Configured</span>
+                </span>
+                <button class="config-btn" id="open-config-btn">
+                    ⚙️ Configure
+                </button>
             </div>
         </div>
     </header>
 
-    <main class="main-content">
-        <div class="container">
-            <div id="features" class="grid">
-                <div class="card">
-                    <div class="card-icon icon-vless">🌐</div>
-                    <h3>VLESS Protocol</h3>
-                    <p>Lightweight proxy protocol with no encryption overhead, providing high-performance data transfer, supporting TCP/UDP forwarding.</p>
-                </div>
-
-                <div class="card">
-                    <div class="card-icon icon-trojan">🛡️</div>
-                    <h3>Trojan Protocol</h3>
-                    <p>TLS-based secure proxy protocol with password authentication, perfectly disguises as normal HTTPS traffic.</p>
-                </div>
-
-                <div class="card">
-                    <div class="card-icon icon-config">⚙️</div>
-                    <h3>Automatic Configuration</h3>
-                    <p>Intelligent ISP detection, automatic subscription link generation, environment variable-driven configuration system.</p>
-                </div>
-
-                <div class="card">
-                    <div class="card-icon icon-security">🔒</div>
-                    <h3>Enterprise-Level Security</h3>
-                    <p>TLS encrypted transmission, identity authentication protection, supports IPv4/IPv6 dual-stack networking.</p>
-                </div>
+    <main class="chat-container">
+        <div class="fixed-question-header" id="fixed-question-header">
+            <div class="question-icon">😊</div>
+            <div class="question-content">
+                <div class="question-text" id="fixed-question-text">上次的问题...</div>
+                <div class="question-time" id="fixed-question-time"></div>
             </div>
+        </div>
+        
+        <div id="chat-messages">
+            <!-- Messages will be added here dynamically -->
+        </div>
 
-            <div id="config" class="config-section">
-                <h2>🚀 Server Configuration Information</h2>
-                <div class="features">
-                    <div class="feature">
-                        <div class="feature-icon icon-vless">⚡</div>
-                        <div>High Performance Bun Runtime</div>
-                    </div>
-                    <div class="feature">
-                        <div class="feature-icon icon-trojan">🌍</div>
-                        <div>Global ISP Detection</div>
-                    </div>
-                    <div class="feature">
-                        <div class="feature-icon icon-config">📊</div>
-                        <div>Real-time Connection Monitoring</div>
-                    </div>
-                    <div class="feature">
-                        <div class="feature-icon icon-security">🔄</div>
-                        <div>Automatic Fault Recovery</div>
-                    </div>
-                </div>
+        <div class="typing-indicator" id="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+            AI is typing...
+        </div>
 
-                <div class="config-info">
-                    <div class="config-item">
-                        <div class="config-label">Server Address</div>
-                        <div class="config-value" id="server-address">localhost:8333</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">UUID (Identity)</div>
-                        <div class="config-value" id="uuid">8ea48d91-eab2-4dfa-9169-859b0d43b3dc</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">WebSocket Path</div>
-                        <div class="config-value" id="ws-path">/8ea48d91</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">Subscription Path</div>
-                        <div class="config-value" id="sub-path">/8d91e</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">Domain Setting</div>
-                        <div class="config-value" id="domain">ws.bun-ws.com</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">Backend Port</div>
-                        <div class="config-value" id="backend-port">...</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">ISP Information</div>
-                        <div class="config-value" id="isp">Detecting...</div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="subscription" class="subscription-section">
-                <h2>📱 Client Subscription Link</h2>
-                <p>Use the following subscription link to add server configuration to your proxy client:</p>
-                <div class="subscription-url">
-                    <code id="subscription-url">http://localhost:8333/8d91e</code>
-                </div>
-                <button class="copy-btn" onclick="copySubscription()">
-                    📋 Copy Subscription Link
-                </button>
-
-                <!-- Manual SUB_PATH Input -->
-                <div style="margin-top: 2rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem; color: var(--light);">Manual Config Load</h3>
-                    <p style="color: var(--gray); font-size: 0.875rem; margin-bottom: 1rem;">
-                        If automatic config loading fails, enter your subscription path (e.g., <code>8d91e</code>) and click "Load Config".
-                    </p>
-                    <div style="display: flex; gap: 0.5rem; align-items: center;">
-                        <input type="text" id="manual-sub-path" placeholder="Subscription Path (e.g., 8d91e)" style="flex-grow: 1; padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(148, 163, 184, 0.3); background: rgba(15, 23, 42, 0.6); color: var(--light); font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.875rem;">
-                        <button class="btn btn-secondary" onclick="loadConfigFromInput()" style="padding: 0.75rem 1rem; white-space: nowrap;">
-                            🔄 Load Config
-                        </button>
-                    </div>
-                </div>
-                <p style="margin-top: 1rem; color: var(--gray); font-size: 0.875rem;">
-                    The subscription content includes VLESS and Trojan dual-protocol configuration; the client will automatically identify the supported protocol.
-                </p>
-            </div>
+        <div class="input-area">
+            <input type="text" id="message-input" placeholder="Type your message here..." />
+            <button class="send-btn" id="send-btn" disabled>➤</button>
         </div>
     </main>
 
-    <footer>
-        <div class="container">
-            <div class="footer-content">
-                <h3 style="margin-bottom: 1rem;">🎉 Thank you for using bun-ws</h3>
-                <p>Lightweight, high-performance WebSocket proxy server | Built on Bun runtime</p>
-                <div class="footer-links">
-                    <a href="https://github.com/yixunbfb/bun-ws/wiki">Docs</a>
-                    <a href="https://github.com/yixunbfb/bun-ws">GitHub</a>
-                    <a href="https://github.com/yixunbfb/bun-ws/discussions">Community</a>
-                    <a href="https://github.com/yixunbfb/bun-ws/issues">Support</a>
+    <!-- API Key Configuration Dialog -->
+    <div class="dialog-overlay" id="config-dialog">
+        <div class="dialog-content">
+            <h2>Configure AI API Key</h2>
+            <p>Enter your OpenAI API key to enable AI chat functionality. This key will be stored locally in your browser.</p>
+            <form id="config-form">
+                <div class="form-group">
+                    <label for="api-key">API Key</label>
+                    <input type="text" id="api-key" placeholder="sk-..." autocomplete="off" />
                 </div>
-                <p style="opacity: 0.7; margin-top: 1.5rem;">
-                    Made with ❤️ using Bun | Apache License 2.0
-                </p>
-            </div>
+                <div class="dialog-actions">
+                    <button type="button" class="btn-cancel" id="cancel-config-btn">Cancel</button>
+                    <button type="submit" class="btn-save">Save</button>
+                </div>
+            </form>
         </div>
-    </footer>
+    </div>
 
-        <script src="/main.js"></script>
+    <script src="/chat.js"></script>
 </body>
 </html>

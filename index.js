@@ -257,6 +257,51 @@ serve({
         });
       }
 
+      // 0.3. AI Chat API endpoint (New)
+      if (url.pathname === `/api/ai-chat` && req.method === 'POST') {
+        try {
+          const { apiKey, message } = await req.json();
+
+          if (!apiKey || !message) {
+            return new Response(JSON.stringify({ error: 'API Key and message are required.' }), { status: 400, headers: { "Content-Type": "application/json" } });
+          }
+
+          // Call OpenAI API (or any compatible API)
+          const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'gpt-3.5-turbo', // Or 'gpt-4', 'gpt-4-turbo' etc.
+              messages: [
+                { role: 'user', content: message }
+              ],
+              max_tokens: 150,
+              temperature: 0.7,
+            }),
+          });
+
+          const aiData = await aiResponse.json();
+
+          if (!aiResponse.ok) {
+            console.error('OpenAI API Error:', aiData);
+            return new Response(JSON.stringify({ error: aiData.error?.message || 'AI API call failed.' }), { status: aiResponse.status, headers: { "Content-Type": "application/json" } });
+          }
+
+          const reply = aiData.choices?.[0]?.message?.content?.trim() || 'AI did not provide a response.';
+
+          return new Response(JSON.stringify({ reply }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        } catch (error) {
+          console.error('Error in /api/ai-chat handler:', error);
+          return new Response(JSON.stringify({ error: 'Internal server error processing AI request.' }), { status: 500, headers: { "Content-Type": "application/json" } });
+        }
+      }
+
       // 1. Subscription endpoint
       // console.log(`path: ${url.pathname}, sub_path: /${SUB_PATH}`);
       if (url.pathname === `/${SUB_PATH}`) {
