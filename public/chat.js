@@ -1,480 +1,515 @@
-// DOM Utility functions (ensure they are available)
+// DOM Utility functions
 const $ = (selector, context = document) => context.querySelector(selector);
 const $$ = (selector, context = document) => context.querySelectorAll(selector);
 
-// Theme management functions
-const ThemeManager = {
-    init() {
+// Message groups for sticky headers
+let currentMessageGroup = null;
+let lastUserMessage = null;
+
+// Notification System
+const NotificationTypes = {
+    SUCCESS: 'success',
+    ERROR: 'error',
+    WARNING: 'warning',
+    INFO: 'info'
+};
+
+const NotificationIcons = {
+    success: '✓',
+    error: '✕',
+    warning: '⚠',
+    info: 'ℹ'
+};
+
+function showNotification(message, type = NotificationTypes.INFO, title = '', duration = 3000) {
+    const container = $('#notification-container');
+    if (!container) {
+        console.error('Notification container not found');
+        return;
+    }
+
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+
+    const icon = document.createElement('div');
+    icon.className = 'notification-icon';
+    icon.textContent = NotificationIcons[type] || 'ℹ';
+
+    const content = document.createElement('div');
+    content.className = 'notification-content';
+
+    if (title) {
+        const titleEl = document.createElement('div');
+        titleEl.className = 'notification-title';
+        titleEl.textContent = title;
+        content.appendChild(titleEl);
+    }
+
+    const messageEl = document.createElement('div');
+    messageEl.className = 'notification-message';
+    messageEl.textContent = message;
+    content.appendChild(messageEl);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'notification-close';
+    closeBtn.innerHTML = '×';
+    closeBtn.setAttribute('aria-label', 'Close notification');
+
+    notification.appendChild(icon);
+    notification.appendChild(content);
+    notification.appendChild(closeBtn);
+
+    // Add to container
+    container.appendChild(notification);
+
+    // Auto remove after duration
+    const timeoutId = setTimeout(() => {
+        removeNotification(notification);
+    }, duration);
+
+    // Close button handler
+    closeBtn.addEventListener('click', () => {
+        clearTimeout(timeoutId);
+        removeNotification(notification);
+    });
+
+    return notification;
+}
+
+function removeNotification(notification) {
+    if (!notification || !notification.parentElement) return;
+
+    notification.style.animation = 'fadeOut 0.3s ease';
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.parentElement.removeChild(notification);
+        }
+    }, 300);
+}
+
+// Initialize chat functionality
+document.addEventListener('DOMContentLoaded', () => {
+    const messageInput = $('#message-input');
+    const sendBtn = $('#send-btn');
+    const chatMessages = $('#chat-messages');
+    const configDialog = $('#config-dialog');
+    const openConfigBtn = $('#open-config-btn');
+    const cancelConfigBtn = $('#cancel-config-btn');
+    const configForm = $('#config-form');
+    const apiKeyInput = $('#api-key');
+    const apiKeyStatus = $('#api-key-status');
+    const apiKeyStatusText = $('#api-key-status-text');
+    const typingIndicator = $('#typing-indicator');
+    const themeToggle = $('#theme-toggle');
+
+    // Debug: Check if critical elements exist
+    if (!themeToggle) {
+        console.error('Theme toggle button not found!');
+    }
+    if (!openConfigBtn) {
+        console.error('Config button not found!');
+    }
+    if (!configDialog) {
+        console.error('Config dialog not found!');
+    }
+
+    const API_KEY_STORAGE_KEY = 'ai_api_key';
+    const AI_URL_STORAGE_KEY = 'ai_api_url';
+    const MODEL_STORAGE_KEY = 'ai_model';
+
+    // Theme management
+    function loadTheme() {
         const savedTheme = localStorage.getItem('theme') || 'dark';
-        this.setTheme(savedTheme);
-        this.setupEventListeners();
-    },
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        updateThemeToggleUI(savedTheme);
+    }
 
-    setTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('theme', theme);
-        this.updateToggleButton(theme);
-    },
+    function updateThemeToggleUI(theme) {
+        const lightIcon = themeToggle.querySelector('.light-icon');
+        const darkIcon = themeToggle.querySelector('.dark-icon');
 
-    toggleTheme() {
-        const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-        this.setTheme(newTheme);
-    },
-
-    updateToggleButton(theme) {
-        const themeToggle = $('#theme-toggle');
-        const themeIcon = themeToggle?.querySelector('.theme-icon');
-        if (themeIcon) {
-            themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
+        if (theme === 'light') {
+            lightIcon.style.display = 'none';
+            darkIcon.style.display = 'inline';
+            themeToggle.title = 'Switch to dark mode';
+        } else {
+            lightIcon.style.display = 'inline';
+            darkIcon.style.display = 'none';
+            themeToggle.title = 'Switch to light mode';
         }
-    },
+    }
 
-    setupEventListeners() {
-        const themeToggle = $('#theme-toggle');
-        if (themeToggle) {
-            themeToggle.addEventListener('click', () => this.toggleTheme());
+    if (themeToggle) {
+        themeToggle.addEventListener('click', () => {
+            console.log('Theme toggle clicked');
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeToggleUI(newTheme);
+            console.log('Theme changed to:', newTheme);
+        });
+    }
+
+    // Load saved theme
+    loadTheme();
+
+    // Load configuration from localStorage and update UI
+    let currentApiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+    let currentAiUrl = localStorage.getItem(AI_URL_STORAGE_KEY) || 'https://api.openai.com/v1/chat/completions';
+    let currentModel = localStorage.getItem(MODEL_STORAGE_KEY) || 'gpt-3.5-turbo';
+    updateApiKeyStatusUI();
+
+    // --- API Key Configuration Dialog Logic ---
+    if (openConfigBtn) {
+        openConfigBtn.addEventListener('click', () => {
+            console.log('Config button clicked');
+            // Pre-fill all fields with current values
+            const aiUrlInput = $('#ai-url');
+            const modelInput = $('#model');
+
+            if (aiUrlInput) aiUrlInput.value = currentAiUrl || 'https://api.openai.com/v1/chat/completions';
+            if (apiKeyInput) apiKeyInput.value = currentApiKey || '';
+            if (modelInput) modelInput.value = currentModel || 'gpt-3.5-turbo';
+
+            if (configDialog) {
+                configDialog.classList.add('active');
+                console.log('Dialog opened, active class added');
+            }
+            if (aiUrlInput) aiUrlInput.focus();
+        });
+    }
+
+    if (cancelConfigBtn) {
+        cancelConfigBtn.addEventListener('click', () => {
+            console.log('Cancel button clicked');
+            if (configDialog) configDialog.classList.remove('active');
+            if (apiKeyInput) apiKeyInput.value = '';
+        });
+    }
+
+    if (configDialog) {
+        configDialog.addEventListener('click', (e) => {
+            if (e.target === configDialog) {
+                console.log('Dialog overlay clicked');
+                configDialog.classList.remove('active');
+                if (apiKeyInput) apiKeyInput.value = '';
+            }
+        });
+    }
+
+    configForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newAiUrl = $('#ai-url').value.trim();
+        const newApiKey = apiKeyInput.value.trim();
+        const newModel = $('#model').value.trim();
+
+        if (!newApiKey) {
+            showNotification('API Key cannot be empty.', NotificationTypes.WARNING, 'Validation Error');
+            return;
         }
+
+        // Show loading state
+        const saveBtn = $('.btn-save');
+        const originalBtnText = saveBtn.textContent;
+        saveBtn.textContent = 'Testing...';
+        saveBtn.disabled = true;
+
+        try {
+            // Test the configuration by calling the server endpoint
+            const response = await fetch('/api/ai-settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    settings: {
+                        apiUrl: newAiUrl,
+                        apiKey: newApiKey,
+                        model: newModel
+                    }
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to validate API settings');
+            }
+
+            // Save all settings to localStorage
+            localStorage.setItem(API_KEY_STORAGE_KEY, newApiKey);
+            localStorage.setItem(AI_URL_STORAGE_KEY, newAiUrl);
+            localStorage.setItem(MODEL_STORAGE_KEY, newModel);
+            
+            // Update current variables
+            currentApiKey = newApiKey;
+            currentAiUrl = newAiUrl;
+            currentModel = newModel;
+            
+            updateApiKeyStatusUI();
+            configDialog.classList.remove('active');
+            
+            // Clear form
+            apiKeyInput.value = '';
+            $('#ai-url').value = '';
+            $('#model').value = '';
+            
+            addMessageToChat('System', 'AI Settings configured successfully! ' + data.message, 'assistant');
+            showNotification('AI Settings configured successfully!', NotificationTypes.SUCCESS, 'Success');
+        } catch (error) {
+            console.error('Error configuring AI settings:', error);
+            showNotification(error.message, NotificationTypes.ERROR, 'Configuration Error');
+        } finally {
+            // Restore button state
+            saveBtn.textContent = originalBtnText;
+            saveBtn.disabled = false;
+        }
+    });
+
+    function updateApiKeyStatusUI() {
+        if (currentApiKey) {
+            apiKeyStatusText.textContent = 'API Key Configured';
+            $('.dot', apiKeyStatus).classList.remove('not-configured');
+            $('.dot', apiKeyStatus).classList.add('configured');
+            sendBtn.disabled = false;
+        } else {
+            apiKeyStatusText.textContent = 'API Key Not Configured';
+            $('.dot', apiKeyStatus).classList.remove('configured');
+            $('.dot', apiKeyStatus).classList.add('not-configured');
+            sendBtn.disabled = true;
+        }
+    }
+
+    // --- Chat Logic Functions ---
+    function createMessageGroup(messageText) {
+        // Create message group container
+        const messageGroup = document.createElement('div');
+        messageGroup.classList.add('message-group');
+        
+        // Create sticky header for the question
+        const questionHeader = document.createElement('div');
+        questionHeader.classList.add('question-header');
+        questionHeader.innerHTML = `
+            <span>Q: ${messageText}</span>
+            <button class="hide-header-btn" title="Hide header">×</button>
+        `;
+        
+        // Add hide functionality
+        const hideBtn = questionHeader.querySelector('.hide-header-btn');
+        hideBtn.addEventListener('click', () => {
+            questionHeader.classList.add('hidden');
+        });
+        
+        messageGroup.appendChild(questionHeader);
+        
+        // Store reference for scroll handling
+        currentMessageGroup = questionHeader;
+        
+        return messageGroup;
+    }
+
+    function addMessageToChat(sender, content, type) {
+        let messageGroup;
+        
+        // For user messages, create a new message group
+        if (type === 'user') {
+            lastUserMessage = content;
+            messageGroup = createMessageGroup(content);
+            chatMessages.appendChild(messageGroup);
+        }
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message', type);
+
+        const iconDiv = document.createElement('div');
+        iconDiv.classList.add('message-icon');
+        iconDiv.textContent = type === 'user' ? '😊' : '🤖';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.classList.add('message-content');
+        
+        const messageText = document.createElement('div');
+        messageText.classList.add('message-text');
+        messageText.textContent = content;
+        
+        contentDiv.appendChild(messageText);
+        messageDiv.appendChild(iconDiv);
+        messageDiv.appendChild(contentDiv);
+
+        // Add to the current message group or create one if needed
+        if (type === 'user') {
+            messageGroup.appendChild(messageDiv);
+        } else {
+            // Find the last message group or create one
+            const lastGroup = chatMessages.querySelector('.message-group:last-child');
+            if (lastGroup) {
+                lastGroup.appendChild(messageDiv);
+            } else {
+                // Create a group for assistant responses without a preceding question
+                const assistantGroup = document.createElement('div');
+                assistantGroup.classList.add('message-group');
+                assistantGroup.appendChild(messageDiv);
+                chatMessages.appendChild(assistantGroup);
+            }
+        }
+        
+        // Smooth scroll to bottom
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        // Update sticky header visibility after DOM update
+        setTimeout(updateStickyHeaders, 100);
+    }
+
+    function setTypingIndicator(show) {
+        typingIndicator.classList.toggle('active', show);
+        if (show) {
+            chatMessages.appendChild(typingIndicator);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+
+    // Sticky header scroll handling
+    function updateStickyHeaders() {
+        const header = $('.question-header');
+        if (!header || header.classList.contains('hidden')) return;
+        
+        const chatContainerRect = chatMessages.getBoundingClientRect();
+        const headerRect = header.getBoundingClientRect();
+        
+        // Show/hide based on scroll position
+        const shouldHide = chatMessages.scrollTop > 100;
+        header.style.opacity = shouldHide ? '1' : '0.9';
+    }
+
+    // Enhanced scroll handling for sticky headers
+    chatMessages.addEventListener('scroll', () => {
+        updateStickyHeaders();
+        
+        // Auto-hide typing indicator when scrolling up
+        if (chatMessages.scrollTop < chatMessages.scrollHeight - chatMessages.clientHeight - 100) {
+            // User is scrolling up, typing indicator should be hidden
+            $('.question-header')?.classList.add('hidden');
+        }
+    });
+
+    async function sendMessage() {
+        const userMessageText = messageInput.value.trim();
+        if (!userMessageText) return;
+
+        if (!currentApiKey) {
+            showNotification('Please configure your AI API Key first.', NotificationTypes.WARNING, 'API Key Required');
+            // Open config dialog automatically
+            if (openConfigBtn) {
+                openConfigBtn.click();
+            }
+            return;
+        }
+
+        addMessageToChat('You', userMessageText, 'user');
+        messageInput.value = '';
+        setTypingIndicator(true);
+        sendBtn.disabled = true;
+        
+        // Hide any previous sticky headers (keep only current one visible)
+        $$('.question-header').forEach(header => {
+            if (header !== currentMessageGroup) {
+                header.classList.add('hidden');
+            }
+        });
+
+        try {
+            const response = await fetch('/api/ai-chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    apiKey: currentApiKey,
+                    message: userMessageText,
+                    aiUrl: currentAiUrl,
+                    model: currentModel
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`AI API request failed with status: ${response.status}, message: ${await response.text()}`);
+            }
+
+            const data = await response.json();
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            addMessageToChat('AI', data.reply, 'assistant');
+        } catch (error) {
+            console.error('Error communicating with AI:', error);
+            addMessageToChat('System', `Error: ${error.message}`, 'assistant');
+        } finally {
+            setTypingIndicator(false);
+            sendBtn.disabled = false;
+        }
+    }
+
+    // Event Listeners for sending messages
+    sendBtn.addEventListener('click', sendMessage);
+
+    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    // Auto-resize textarea functionality
+    messageInput.addEventListener('input', () => {
+        messageInput.style.height = 'auto';
+        messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
+    });
+
+    // Close dialog on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && configDialog.classList.contains('active')) {
+            configDialog.classList.remove('active');
+            apiKeyInput.value = '';
+        }
+    });
+
+    // Welcome message
+    if (chatMessages.children.length === 0) {
+        setTimeout(() => {
+            addMessageToChat('System', 'Welcome to bun-ws AI Chat! Please configure your AI API Key to start chatting.', 'assistant');
+        }, 300);
+    }
+
+    // Prevent zoom on input focus (mobile)
+    messageInput.addEventListener('touchstart', (e) => {
+        if (window.innerWidth <= 768) {
+            document.body.style.fontSize = '16px';
+        }
+    });
+
+    // Focus input on load
+    setTimeout(() => {
+        messageInput.focus();
+    }, 100);
+});
+
+// Utility function for external use (if needed)
+window.scrollToBottom = function() {
+    const chatMessages = $('#chat-messages');
+    if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-    // Initialize theme manager
-    ThemeManager.init();
-
-    const chatViewContainer = $('#chat-view');
-    const mainContent = $('.main-content .container'); // The original content container
-    const navChatLink = $('#nav-chat-link'); // Link in the navigation
-
-    let chatUIInjected = false; // Flag to ensure chat UI is only injected once
-
-    // --- Chat UI HTML Template ---
-    // This is the HTML structure from the original chat.html
-    const chatUIHTML = `
-        <header class="chat-header">
-            <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
-                <h1 style="display: flex; align-items: center; gap: 0.5rem; margin: 0;">
-                    <span id="back-to-main-btn" style="font-size: 1.5rem; cursor: pointer; opacity: 0.7; transition: opacity 0.3s ease;" title="Back to Main">←</span>
-                    bun-ws AI Chat
-                </h1>
-                <div style="display: flex; align-items: center; gap: 1rem;">
-                    <span class="api-key-status" id="api-key-status">
-                        <span class="dot not-configured"></span>
-                        <span id="api-key-status-text">API Key Not Configured</span>
-                    </span>
-                    <button class="config-btn" id="open-config-btn">
-                        ⚙️ Configure Key
-                    </button>
-                </div>
-            </div>
-        </header>
-
-        <main class="chat-container">
-            <div id="chat-messages">
-                <!-- Messages will be added here dynamically -->
-            </div>
-
-            <div class="typing-indicator" id="typing-indicator">
-                <span class="dot"></span>
-                <span class="dot"></span>
-                <span class="dot"></span>
-                AI is typing...
-            </div>
-
-            <div class="input-area">
-                <input type="text" id="message-input" placeholder="Type your message here..." />
-                <button class="send-btn" id="send-btn" disabled>➤</button>
-            </div>
-        </main>
-
-        <!-- API Key Configuration Dialog -->
-        <div class="dialog-overlay" id="config-dialog">
-            <div class="dialog-content">
-                <h2>Configure AI API Key</h2>
-                <p>Enter your OpenAI API key to enable AI chat functionality. This key will be stored locally in your browser.</p>
-                <form id="config-form">
-                    <div class="form-group">
-                        <label for="api-key">API Key</label>
-                        <input type="password" id="api-key" placeholder="sk-..." autocomplete="off" />
-                    </div>
-                    <div class="dialog-actions">
-                        <button type="button" class="btn-cancel" id="cancel-config-btn">Cancel</button>
-                        <button type="submit" class="btn-save">Save</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    `;
-
-    // --- View Management Functions ---
-    function showChatView() {
-        if (!chatUIInjected) {
-            chatViewContainer.innerHTML = chatUIHTML;
-            chatUIInjected = true;
-            initializeChatComponents(); // Initialize chat event listeners after injection
-        }
-        chatViewContainer.classList.remove('hidden');
-        // Hide all direct children of .main-content .container except #chat-view
-        $$('> *:not(#chat-view)', mainContent).forEach(el => el.classList.add('hidden'));
-        document.body.classList.add('chat-active'); // Add class to body for global styles
-        chatViewContainer.querySelector('#message-input').focus(); // Focus input for immediate typing
+// Export theme functions for potential external use
+window.toggleTheme = function() {
+    const themeToggle = $('#theme-toggle');
+    if (themeToggle) {
+        themeToggle.click();
     }
-
-    function hideChatView() {
-        chatViewContainer.classList.add('hidden');
-        $$('> *:not(#chat-view)', mainContent).forEach(el => el.classList.remove('hidden'));
-        document.body.classList.remove('chat-active');
-    }
-
-    // --- Chat Component Initialization & Logic ---
-    function initializeChatComponents() {
-        // These elements are now available after injection
-        const messageInput = $('#message-input', chatViewContainer);
-        const sendBtn = $('#send-btn', chatViewContainer);
-        const chatMessages = $('#chat-messages', chatViewContainer);
-        const configDialog = $('#config-dialog', chatViewContainer);
-        const openConfigBtn = $('#open-config-btn', chatViewContainer);
-        const cancelConfigBtn = $('#cancel-config-btn', chatViewContainer);
-        const configForm = $('#config-form', chatViewContainer);
-        const apiKeyInput = $('#api-key', chatViewContainer);
-        const apiKeyStatus = $('#api-key-status', chatViewContainer);
-        const apiKeyStatusText = $('#api-key-status-text', chatViewContainer);
-        const typingIndicator = $('#typing-indicator', chatViewContainer);
-        const backToMainBtn = $('#back-to-main-btn', chatViewContainer); // Back button in chat header
-
-        // AI Settings Management with client isolation
-        const SETTINGS_STORAGE_KEY = 'ai_settings_' + (window.location.hostname + window.location.pathname);
-        
-        // Default settings
-        let currentSettings = {
-            apiKey: '',
-            apiUrl: 'https://api.openai.com/v1/chat/completions',
-            model: 'gpt-3.5-turbo'
-        };
-
-        // Load settings from localStorage and update UI
-        loadAISettings();
-        updateApiKeyStatusUI();
-
-        // AI Settings Functions
-        function loadAISettings() {
-            try {
-                const savedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
-                if (savedSettings) {
-                    const parsed = JSON.parse(savedSettings);
-                    currentSettings = { ...currentSettings, ...parsed };
-                }
-                
-                // Also try to get server defaults
-                fetch('/api/ai-settings')
-                    .then(response => response.json())
-                    .then(serverSettings => {
-                        if (serverSettings.apiUrl && !currentSettings.apiUrl) {
-                            currentSettings.apiUrl = serverSettings.apiUrl;
-                        }
-                        if (serverSettings.model && !currentSettings.model) {
-                            currentSettings.model = serverSettings.model;
-                        }
-                    })
-                    .catch(console.error);
-            } catch (error) {
-                console.error('Error loading AI settings:', error);
-            }
-        }
-
-        function saveAISettings() {
-            try {
-                localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(currentSettings));
-                
-                // Validate settings with server
-                fetch('/api/ai-settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ settings: currentSettings })
-                }).catch(console.error);
-            } catch (error) {
-                console.error('Error saving AI settings:', error);
-            }
-        }
-
-        function updateSettingsUI() {
-            // Update form fields
-            $('#api-url', configDialog).value = currentSettings.apiUrl || '';
-            $('#api-key', configDialog).value = currentSettings.apiKey || '';
-            $('#ai-model', configDialog).value = currentSettings.model || 'gpt-3.5-turbo';
-            
-            // Show/hide custom model field
-            const customModelGroup = $('#custom-model-group', configDialog);
-            const customModelInput = $('#custom-model', configDialog);
-            if (currentSettings.model === 'custom' && currentSettings.customModel) {
-                customModelGroup.style.display = 'block';
-                customModelInput.value = currentSettings.customModel || '';
-            } else {
-                customModelGroup.style.display = 'none';
-                customModelInput.value = '';
-            }
-            
-            // Update status display
-            updateApiKeyStatusUI();
-        }
-
-        function updateApiKeyStatusUI() {
-            const hasApiKey = currentSettings.apiKey && currentSettings.apiKey.length > 0;
-            const hasValidUrl = currentSettings.apiUrl && currentSettings.apiUrl.startsWith('http');
-            
-            if (hasApiKey && hasValidUrl) {
-                apiKeyStatusText.textContent = `Configured (${currentSettings.model})`;
-                $('.dot', apiKeyStatus).classList.remove('not-configured');
-                $('.dot', apiKeyStatus).classList.add('configured');
-                sendBtn.disabled = false;
-            } else {
-                apiKeyStatusText.textContent = 'Settings Incomplete';
-                $('.dot', apiKeyStatus).classList.remove('configured');
-                $('.dot', apiKeyStatus).classList.add('not-configured');
-                sendBtn.disabled = true;
-            }
-        }
-
-        // --- Settings Configuration Dialog Logic ---
-        openConfigBtn.addEventListener('click', () => {
-            updateSettingsUI(); // Refresh UI with current settings
-            configDialog.classList.add('active');
-            $('#api-url', configDialog).focus();
-        });
-
-        cancelConfigBtn.addEventListener('click', () => {
-            configDialog.classList.remove('active');
-            // Reset form to current settings on cancel
-            updateSettingsUI();
-        });
-
-        configDialog.addEventListener('click', (e) => {
-            if (e.target === configDialog) {
-                configDialog.classList.remove('active');
-                updateSettingsUI(); // Reset form
-            }
-        });
-
-        // Handle model selection change
-        $('#ai-model', configDialog).addEventListener('change', function() {
-            const customModelGroup = $('#custom-model-group', configDialog);
-            const customModelInput = $('#custom-model', configDialog);
-            
-            if (this.value === 'custom') {
-                customModelGroup.style.display = 'block';
-                customModelInput.focus();
-            } else {
-                customModelGroup.style.display = 'none';
-                customModelInput.value = '';
-            }
-        });
-
-        configForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            
-            const newApiUrl = $('#api-url', configDialog).value.trim();
-            const newApiKey = $('#api-key', configDialog).value.trim();
-            const selectedModel = $('#ai-model', configDialog).value;
-            const customModel = $('#custom-model', configDialog).value.trim();
-            
-            // Validation
-            if (!newApiUrl || !newApiUrl.startsWith('http')) {
-                alert('Please enter a valid API URL starting with http/https.');
-                return;
-            }
-            
-            if (!newApiKey) {
-                alert('API Key cannot be empty.');
-                return;
-            }
-            
-            if (selectedModel === 'custom' && !customModel) {
-                alert('Please enter a custom model name.');
-                return;
-            }
-            
-            // Update settings
-            currentSettings = {
-                ...currentSettings,
-                apiUrl: newApiUrl,
-                apiKey: newApiKey,
-                model: selectedModel === 'custom' ? customModel : selectedModel,
-                customModel: selectedModel === 'custom' ? customModel : undefined
-            };
-            
-            // Save settings
-            saveAISettings();
-            updateApiKeyStatusUI();
-            configDialog.classList.remove('active');
-            
-            // Clear sensitive fields
-            $('#api-key', configDialog).value = '';
-            addMessageToChat('System', `AI settings configured successfully! Model: ${currentSettings.model}`, 'assistant');
-        });
-
-        // --- Chat Logic Functions ---
-        // Fixed question header functionality
-        let fixedQuestionHeader = null;
-        let lastUserMessage = null;
-
-        function addMessageToChat(sender, content, type) {
-            const messageDiv = document.createElement('div');
-            messageDiv.classList.add('message', type);
-
-            const iconDiv = document.createElement('div');
-            iconDiv.classList.add('message-icon');
-            iconDiv.textContent = type === 'user' ? '😊' : '🤖';
-
-            const bubbleDiv = document.createElement('div');
-            bubbleDiv.classList.add('message-bubble');
-            bubbleDiv.textContent = content;
-
-            const timestampDiv = document.createElement('div');
-            timestampDiv.classList.add('message-timestamp');
-            timestampDiv.textContent = new Date().toLocaleTimeString('zh-CN', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
-
-            messageDiv.appendChild(iconDiv);
-            messageDiv.appendChild(bubbleDiv);
-            messageDiv.appendChild(timestampDiv);
-            chatMessages.appendChild(messageDiv);
-
-            // Store the last user message for fixed header functionality
-            if (type === 'user') {
-                lastUserMessage = messageDiv;
-            }
-
-            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to bottom
-
-            // Update fixed question header when new message is added
-            updateFixedQuestionHeader();
-        }
-
-        function setTypingIndicator(show) {
-            typingIndicator.style.display = show ? 'flex' : 'none';
-        }
-
-        // Fixed Question Header functionality
-        function setupScrollListener() {
-            const chatMessages = $('#chat-messages', chatViewContainer);
-            const fixedHeader = $('#fixed-question-header');
-            
-            chatMessages.addEventListener('scroll', () => {
-                updateFixedQuestionHeader();
-            });
-        }
-
-        function updateFixedQuestionHeader() {
-            const chatMessages = $('#chat-messages', chatViewContainer);
-            const fixedHeader = $('#fixed-question-header');
-            const fixedQuestionText = $('#fixed-question-text');
-            const fixedQuestionTime = $('#fixed-question-time');
-
-            if (!lastUserMessage || !fixedHeader || !fixedQuestionText || !fixedQuestionTime) {
-                return;
-            }
-
-            // Check if user has scrolled up far enough to show the fixed header
-            const scrollThreshold = 100; // Pixels from top before showing header
-            const shouldShow = chatMessages.scrollTop > scrollThreshold && 
-                             lastUserMessage.offsetTop < chatMessages.scrollTop;
-
-            if (shouldShow) {
-                // Get the question text from the last user message
-                const questionText = lastUserMessage.querySelector('.message-bubble').textContent;
-                const timestamp = lastUserMessage.querySelector('.message-timestamp').textContent;
-                
-                fixedQuestionText.textContent = questionText.length > 50 
-                    ? questionText.substring(0, 50) + '...' 
-                    : questionText;
-                fixedQuestionTime.textContent = timestamp;
-                
-                fixedHeader.classList.add('active');
-            } else {
-                fixedHeader.classList.remove('active');
-            }
-        }
-
-        async function sendMessage() {
-            const userMessageText = messageInput.value.trim();
-            if (!userMessageText) return;
-
-             if (!currentSettings.apiKey || !currentSettings.apiUrl) {
-                 alert('Please configure your AI settings first.');
-                 return;
-             }
-
-            addMessageToChat('You', userMessageText, 'user');
-            messageInput.value = ''; // Clear input
-            setTypingIndicator(true); // Show typing indicator
-            sendBtn.disabled = true; // Disable send button during request
-
-            try {
-                const response = await fetch('/api/ai-chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        apiKey: currentSettings.apiKey,
-                        apiUrl: currentSettings.apiUrl,
-                        model: currentSettings.model,
-                        message: userMessageText
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`AI API request failed with status: ${response.status}, message: ${await response.text()}`);
-                }
-
-                const data = await response.json();
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                addMessageToChat('AI', data.reply, 'assistant');
-            } catch (error) {
-                console.error('Error communicating with AI:', error);
-                addMessageToChat('System', `Error: ${error.message}`, 'assistant');
-            } finally {
-                setTypingIndicator(false); // Hide typing indicator
-                sendBtn.disabled = false; // Re-enable send button
-            }
-        }
-
-        // Event Listeners for sending messages
-        sendBtn.addEventListener('click', sendMessage);
-
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        // Back to main page button listener
-        backToMainBtn.addEventListener('click', hideChatView);
-
-        // Setup scroll listener for fixed question header
-        setupScrollListener();
-
-        // Initial message to guide user (only show if chat view is active initially or injected)
-        if (!chatViewContainer.classList.contains('hidden')) {
-            addMessageToChat('System', 'Welcome to bun-ws AI Chat! Please configure your AI API Key to start chatting.', 'assistant');
-        }
-    }
-
-
-    // Initial message to guide user if chat view is active (e.g., page loaded directly into chat)
-    // This check is less relevant now as chat is integrated, but can be useful for direct linking
-    // if (window.location.hash === '#chat' && chatUIInjected) {
-    //    showChatView();
-    // }
-});
-
-// Initial message to guide user if chat view is accessed somehow without injection (e.g., page loaded directly)
-// This is a fallback and might not be perfectly accurate without explicit integration
-// addMessageToChat('System', 'Welcome to bun-ws AI Chat! This is an integrated view.', 'assistant');
+};
