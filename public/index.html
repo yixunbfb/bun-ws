@@ -53,19 +53,40 @@
         </div>
     </main>
 
-    <!-- API Key Configuration Dialog -->
+    <!-- AI Settings Configuration Dialog -->
     <div class="dialog-overlay" id="config-dialog">
         <div class="dialog-content">
-            <h2>Configure AI API Key</h2>
-            <p>Enter your OpenAI API key to enable AI chat functionality. This key will be stored locally in your browser.</p>
+            <h2>Configure AI Settings</h2>
+            <p>Configure your AI API settings. These settings are stored locally in your browser and are isolated per client for security.</p>
             <form id="config-form">
                 <div class="form-group">
+                    <label for="api-url">API URL</label>
+                    <input type="url" id="api-url" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off" />
+                </div>
+                <div class="form-group">
                     <label for="api-key">API Key</label>
-                    <input type="text" id="api-key" placeholder="sk-..." autocomplete="off" />
+                    <input type="password" id="api-key" placeholder="sk-..." autocomplete="off" />
+                    <small class="form-help">Your API key is stored locally and never sent to other clients</small>
+                </div>
+                <div class="form-group">
+                    <label for="ai-model">AI Model</label>
+                    <select id="ai-model">
+                        <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                        <option value="gpt-4">GPT-4</option>
+                        <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                        <option value="gpt-4o">GPT-4 Optimized</option>
+                        <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+                        <option value="claude-3-opus">Claude 3 Opus</option>
+                        <option value="custom">Custom Model</option>
+                    </select>
+                </div>
+                <div class="form-group" id="custom-model-group" style="display: none;">
+                    <label for="custom-model">Custom Model Name</label>
+                    <input type="text" id="custom-model" placeholder="Enter custom model name" autocomplete="off" />
                 </div>
                 <div class="dialog-actions">
                     <button type="button" class="btn-cancel" id="cancel-config-btn">Cancel</button>
-                    <button type="submit" class="btn-save">Save</button>
+                    <button type="submit" class="btn-save">Save Settings</button>
                 </div>
             </form>
         </div>

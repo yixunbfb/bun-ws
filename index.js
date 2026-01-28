@@ -11,28 +11,15 @@ const SUB_PATH = process.env.SUB_PATH || UUID.slice(9, 13);
 const NAME = process.env.NAME || "bun-ws";
 const PORT = process.env.PORT || 8333;
 
+// AI Configuration
+const AI_API_URL = process.env.AI_API_URL || "https://api.openai.com/v1/chat/completions";
+const AI_API_KEY = process.env.AI_API_KEY || "";
+const AI_MODEL = process.env.AI_MODEL || "gpt-3.5-turbo";
+
 // Clean UUID
 const uuid = UUID.replace(/-/g, "");
 
 const STATIC_DIR = join(import.meta.dir, "public"); // Ensure STATIC_DIR is defined
-
-// ... ISP Detection (GetISP) logic
-let ISP = "Unknown"; 
-const GetISP = async () => {
-  try {
-    const response = await fetch("https://api.ip.sb/geoip", {
-      signal: AbortSignal.timeout(3000),
-    });
-    const data = await response.json();
-    ISP = `${data.country_code}-${data.isp}`.replace(/ /g, "_");
-    console.log(`ISP Detected (updated): ${ISP}`);
-  } catch (e) {
-    console.warn("Failed to fetch ISP info");
-  }
-};
-GetISP();
-
-
 
 async function resolveHost(host) {
   // If it's already an IP, return it
@@ -62,9 +49,9 @@ async function resolveHost(host) {
     // Use Bun's native DNS lookup for A records
     const result = await Bun.dns.lookup(host, {
       family: 4, // IPv4
-      signal: AbortSignal.timeout(3000)
+      signal: AbortSignal.timeout(3000),
     });
-    return result.address;
+    return result[0].address; // [{address: '192.0.2.1', family: 4, ttl: 123}, { }]
   } catch (error) {
     throw new Error(`Failed to resolve ${host}: ${error.message}`);
   }
@@ -138,7 +125,7 @@ function handleVlessConnection(ws, msg) {
 
     // Validate UUID
     const id = msg.slice(1, 17);
-    if (!id.every((v, i) => v === parseInt(uuid.substr(i * 2, 2), 16)))
+    if (!id.every((v, i) => v === parseInt(uuid.slice(i * 2, i * 2 + 2), 16)))
       return false;
 
     // Parse Metadata
@@ -215,8 +202,7 @@ function handleTrojanConnection(ws, msg) {
  * Subscription Generator
  */
 function getSub() {
-  const namePart = NAME ? `${NAME}-${ISP}` : ISP;
-  const commonParams = `?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${encodeURIComponent(namePart)}`;
+  const commonParams = `?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${encodeURIComponent(NAME)}`;
 
   const vlessURL = `vless://${UUID}@${DOMAIN}:443${commonParams}&encryption=none`;
   const trojanURL = `trojan://${UUID}@${DOMAIN}:443${commonParams}`;
@@ -240,6 +226,84 @@ serve({
     const url = new URL(req.url);
 
     try {
+
+      if (url.pathname === '/api/set-key' && req.method === "POST") {
+        // todo: frontend post {api_base_url, api_key, api_model}, change them to .env url, key, model variables
+      }
+
+      // 0.3. AI Chat API endpoint (New)
+      if (url.pathname === `/api/ai-chat` && req.method === "POST") {
+        try {
+          const { apiKey, message, model, apiUrl } = await req.json();
+
+          if (!message) {
+            return new Response(
+              JSON.stringify({ error: "Message is required." }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            );
+          }
+
+          // Use provided API key or fall back to environment variable
+          const finalApiKey = apiKey || AI_API_KEY;
+          if (!finalApiKey) {
+            return new Response(
+              JSON.stringify({ error: "API Key is required. Configure it in .env or provide in request." }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            );
+          }
+
+          // Call AI API (OpenAI-compatible)
+          const aiResponse = await fetch(
+            apiUrl || AI_API_URL,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${finalApiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: model || AI_MODEL,
+                messages: [{ role: "user", content: message }],
+                max_tokens: 150,
+                temperature: 0.7,
+              }),
+            },
+          );
+
+          const aiData = await aiResponse.json();
+
+          if (!aiResponse.ok) {
+            console.error("OpenAI API Error:", aiData);
+            return new Response(
+              JSON.stringify({
+                error: aiData.error?.message || "AI API call failed.",
+              }),
+              {
+                status: aiResponse.status,
+                headers: { "Content-Type": "application/json" },
+              },
+            );
+          }
+          
+          const reply =
+          aiData.choices?.[0]?.message?.content?.trim() ||
+          "AI did not provide a response.";
+          
+          return new Response(JSON.stringify({ reply }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          console.error("Error in /api/ai-chat handler:", error);
+          return new Response(
+            JSON.stringify({
+              error: "Internal server error processing AI request.",
+            }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          );
+        }
+      }
+      
       // 0.2. Config API endpoint (New)
       if (url.pathname === `/${SUB_PATH}-json`) {
         const configData = {
@@ -249,56 +313,53 @@ serve({
           SUB_PATH: SUB_PATH,
           NAME: NAME,
           PORT: PORT, // Added PORT from .env to the config data
-          isp: ISP,
         };
         return new Response(JSON.stringify(configData), {
           status: 200,
-          headers: { "Content-Type": "application/json" }
+          headers: { "Content-Type": "application/json" },
         });
       }
 
-      // 0.3. AI Chat API endpoint (New)
-      if (url.pathname === `/api/ai-chat` && req.method === 'POST') {
-        try {
-          const { apiKey, message } = await req.json();
-
-          if (!apiKey || !message) {
-            return new Response(JSON.stringify({ error: 'API Key and message are required.' }), { status: 400, headers: { "Content-Type": "application/json" } });
-          }
-
-          // Call OpenAI API (or any compatible API)
-          const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'gpt-3.5-turbo', // Or 'gpt-4', 'gpt-4-turbo' etc.
-              messages: [
-                { role: 'user', content: message }
-              ],
-              max_tokens: 150,
-              temperature: 0.7,
-            }),
-          });
-
-          const aiData = await aiResponse.json();
-
-          if (!aiResponse.ok) {
-            console.error('OpenAI API Error:', aiData);
-            return new Response(JSON.stringify({ error: aiData.error?.message || 'AI API call failed.' }), { status: aiResponse.status, headers: { "Content-Type": "application/json" } });
-          }
-
-          const reply = aiData.choices?.[0]?.message?.content?.trim() || 'AI did not provide a response.';
-
-          return new Response(JSON.stringify({ reply }), {
+      // 0.4. AI Settings API endpoints (New)
+      if (url.pathname === `/api/ai-settings`) {
+        if (req.method === "GET") {
+          // Return current AI settings (without sensitive API key)
+          const settingsData = {
+            apiUrl: AI_API_URL,
+            model: AI_MODEL,
+            hasApiKey: !!AI_API_KEY, // Only indicate if key is set in env
+          };
+          return new Response(JSON.stringify(settingsData), {
             status: 200,
-            headers: { "Content-Type": "application/json" }
+            headers: { "Content-Type": "application/json" },
           });
-        } catch (error) {
-          console.error('Error in /api/ai-chat handler:', error);
-          return new Response(JSON.stringify({ error: 'Internal server error processing AI request.' }), { status: 500, headers: { "Content-Type": "application/json" } });
+        }
+        
+        if (req.method === "POST") {
+          // Save client-specific settings (handled by frontend storage)
+          const { settings } = await req.json();
+          
+          // This endpoint just validates and echoes back the settings
+          // Actual storage is handled by the client using localStorage/sessionStorage
+          if (!settings) {
+            return new Response(
+              JSON.stringify({ error: "Settings data is required." }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          
+          return new Response(JSON.stringify({ 
+            success: true, 
+            message: "Settings validated successfully",
+            settings: {
+              ...settings,
+              // Don't return sensitive information
+              apiKey: undefined 
+            }
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
         }
       }
 
@@ -310,7 +371,7 @@ serve({
           headers: {
             "Content-Type": "text/plain",
             "Cache-Control": "no-cache",
-          }
+          },
         });
       }
 
@@ -318,7 +379,7 @@ serve({
       // 2. WebSocket Upgrade
       if (url.pathname === `/${WSPATH}`) {
         const success = server.upgrade(req, {
-          data: { socket: null } // Initialize socket data
+          data: { socket: null }, // Initialize socket data
         });
         return success
           ? undefined
@@ -328,17 +389,17 @@ serve({
       // 3. Static File Serving with Bun native methods
       let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
       const fullPath = join(STATIC_DIR, filePath);
-      
+
       // Use Bun.file() for efficient static file serving with automatic MIME type detection
       const bunFile = Bun.file(fullPath);
-      
+
       if (await bunFile.exists()) {
         return new Response(bunFile, {
           headers: {
             "Content-Type": bunFile.type || "text/plain; charset=utf-8",
             "Cache-Control": "public, max-age=3600",
-            "Access-Control-Allow-Origin": "*"
-          }
+            "Access-Control-Allow-Origin": "*",
+          },
         });
       }
 
@@ -346,35 +407,41 @@ serve({
       // If a path doesn't exist, but it's supposed to be an API endpoint (ending in -json),
       // return 404 JSON to help frontend error handling instead of SPA fallback.
       // This is critical for cases where the SUB_PATH might have changed or been guessed incorrectly.
-      if (filePath.endsWith('-json')) {
-        return new Response(JSON.stringify({ error: "API Endpoint Not Found", message: `No configuration found for subscription path: ${url.pathname}` }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" }
-        });
+      if (filePath.endsWith("-json")) {
+        return new Response(
+          JSON.stringify({
+            error: "API Endpoint Not Found",
+            message: `No configuration found for subscription path: ${url.pathname}`,
+          }),
+          {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
       }
 
       // Handle 404 for SPA routing or missing files
-      if (filePath.includes('.') || filePath === '/') {
-        return new Response("404 Not Found", { 
+      if (filePath.includes(".") || filePath === "/") {
+        return new Response("404 Not Found", {
           status: 404,
-          headers: { "Content-Type": "text/plain; charset=utf-8" }
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
-      
+
       // SPA fallback - serve index.html for client-side routing
       const indexFile = Bun.file(join(STATIC_DIR, "index.html"));
       if (await indexFile.exists()) {
         return new Response(indexFile, {
-          headers: { "Content-Type": "text/html; charset=utf-8" }
+          headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
-      
+
       return new Response("404 Not Found", { status: 404 });
     } catch (error) {
       console.error(`Request handling error: ${error.message}`);
-      return new Response("Internal Server Error", { 
+      return new Response("Internal Server Error", {
         status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8" }
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
     }
   },
