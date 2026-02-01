@@ -3,27 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HuggingFace AI Chat</title>
+    <title>bun-ws AI Chat</title>
     <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
     <header class="chat-header">
-        <div class="container">
-            <div class="header-content">
-                <h1>HuggingFac AI Chat</h1>
-                <div class="header-actions">
-                    <button class="theme-toggle" id="theme-toggle" title="Switch theme">
-                        <span class="theme-icon light-icon">☀️</span>
-                        <span class="theme-icon dark-icon">🌙</span>
-                    </button>
-                    <span class="api-key-status" id="api-key-status">
-                        <span class="dot not-configured"></span>
-                        <span id="api-key-status-text">API Key Not Configured</span>
-                    </span>
-                    <button class="config-btn" id="open-config-btn">
-                        ⚙️ Configure Key
+        <div class="chat-header-content">
+            <h1>bun-ws AI Chat</h1>
+            <div class="header-actions">
+                <div class="mode-selector">
+                    <button class="mode-toggle" data-mode="local">Local</button>
+                    <button class="mode-toggle" data-mode="cloud">Cloud</button>
+                </div>
+                <div class="theme-toggle">
+                    <button class="theme-toggle-btn" id="theme-toggle" aria-label="Toggle theme">
+                        <span class="theme-icon">🌙</span>
                     </button>
                 </div>
+                <span class="api-key-status" id="api-key-status">
+                    <span class="dot not-configured"></span>
+                    <span id="api-key-status-text">Local Mode - API Key Not Configured</span>
+                </span>
+                <button class="config-btn" id="open-config-btn">
+                    ⚙️ Configure
+                </button>
             </div>
         </div>
     </header>
@@ -32,6 +35,14 @@
     <div id="notification-container" class="notification-container"></div>
 
     <main class="chat-container">
+        <div class="fixed-question-header" id="fixed-question-header">
+            <div class="question-icon">😊</div>
+            <div class="question-content">
+                <div class="question-text" id="fixed-question-text">上次的问题...</div>
+                <div class="question-time" id="fixed-question-time"></div>
+            </div>
+        </div>
+        
         <div id="chat-messages">
             <!-- Messages will be added here dynamically -->
         </div>
@@ -49,27 +60,55 @@
         </div>
     </main>
 
-    <!-- API Key Configuration Dialog -->
+    <!-- AI Settings Configuration Dialog -->
     <div class="dialog-overlay" id="config-dialog">
         <div class="dialog-content">
             <h2>Configure AI Settings</h2>
-            <p>Configure your AI API settings. All settings will be stored locally in your browser.</p>
+            <p id="dialog-description">Configure your AI API settings. These settings are stored locally in your browser and are isolated per client for security.</p>
             <form id="config-form">
-                <div class="form-group">
-                    <label for="ai-url">AI API URL</label>
-                    <input type="url" id="ai-url" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off" />
+                <div class="auth-fields" id="auth-fields" style="display: none;">
+                    <div class="form-group" id="username-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" placeholder="Enter username" autocomplete="username" />
+                    </div>
+                    <div class="form-group" id="password-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" />
+                    </div>
+                    <div class="form-group" style="display: flex; justify-content: space-between; align-items: center;">
+                        <button type="button" class="btn-text" id="auth-mode-toggle">Switch to Register</button>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="api-key">API Key</label>
-                    <input type="text" id="api-key" placeholder="sk-..." autocomplete="off" />
-                </div>
-                <div class="form-group">
-                    <label for="model">Model</label>
-                    <input type="text" id="model" placeholder="gpt-3.5-turbo" autocomplete="off" />
+                <div class="api-fields" id="api-fields">
+                    <div class="form-group">
+                        <label for="api-url">API URL</label>
+                        <input type="url" id="api-url" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off" />
+                    </div>
+                    <div class="form-group">
+                        <label for="api-key">API Key</label>
+                        <input type="text" id="api-key" placeholder="sk-..." autocomplete="off" />
+                        <small class="form-help">Your API key is stored securely</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="ai-model">AI Model</label>
+                        <select id="ai-model">
+                            <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                            <option value="gpt-4">GPT-4</option>
+                            <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                            <option value="gpt-4o">GPT-4 Optimized</option>
+                            <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+                            <option value="claude-3-opus">Claude 3 Opus</option>
+                            <option value="custom">Custom Model</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="custom-model-group" style="display: none;">
+                        <label for="custom-model">Custom Model Name</label>
+                        <input type="text" id="custom-model" placeholder="Enter custom model name" autocomplete="off" />
+                    </div>
                 </div>
                 <div class="dialog-actions">
                     <button type="button" class="btn-cancel" id="cancel-config-btn">Cancel</button>
-                    <button type="submit" class="btn-save">Save & Test</button>
+                    <button type="submit" class="btn-save" id="save-settings-btn">Save Settings</button>
                 </div>
             </form>
         </div>

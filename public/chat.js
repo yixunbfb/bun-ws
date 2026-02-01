@@ -88,35 +88,50 @@ function removeNotification(notification) {
     }, 300);
 }
 
-// Initialize chat functionality
-document.addEventListener('DOMContentLoaded', () => {
-    const messageInput = $('#message-input');
-    const sendBtn = $('#send-btn');
-    const chatMessages = $('#chat-messages');
-    const configDialog = $('#config-dialog');
-    const openConfigBtn = $('#open-config-btn');
-    const cancelConfigBtn = $('#cancel-config-btn');
-    const configForm = $('#config-form');
-    const apiKeyInput = $('#api-key');
-    const apiKeyStatus = $('#api-key-status');
-    const apiKeyStatusText = $('#api-key-status-text');
-    const typingIndicator = $('#typing-indicator');
-    const themeToggle = $('#theme-toggle');
+    // Initialize chat functionality
+    document.addEventListener('DOMContentLoaded', () => {
+        const messageInput = $('#message-input');
+        const sendBtn = $('#send-btn');
+        const chatMessages = $('#chat-messages');
+        const configDialog = $('#config-dialog');
+        const openConfigBtn = $('#open-config-btn');
+        const cancelConfigBtn = $('#cancel-config-btn');
+        const configForm = $('#config-form');
+        const apiKeyInput = $('#api-key');
+        const apiKeyStatus = $('#api-key-status');
+        const apiKeyStatusText = $('#api-key-status-text');
+        const typingIndicator = $('#typing-indicator');
+        const themeToggle = $('#theme-toggle');
+        const dialogTitle = $('.dialog-content h2');
+        const dialogDescription = $('.dialog-content p');
+        const usernameInput = $('#username');
+        const passwordInput = $('#password');
+        const usernameGroup = $('#username-group');
+        const passwordGroup = $('#password-group');
+        const authModeToggle = $('#auth-mode-toggle');
+        let isLoginMode = true;
 
-    // Debug: Check if critical elements exist
-    if (!themeToggle) {
-        console.error('Theme toggle button not found!');
-    }
-    if (!openConfigBtn) {
-        console.error('Config button not found!');
-    }
-    if (!configDialog) {
-        console.error('Config dialog not found!');
-    }
+        // Debug: Check if critical elements exist
+        if (!themeToggle) {
+            console.error('Theme toggle button not found!');
+        }
+        if (!openConfigBtn) {
+            console.error('Config button not found!');
+        }
+        if (!configDialog) {
+            console.error('Config dialog not found!');
+        }
 
     const API_KEY_STORAGE_KEY = 'ai_api_key';
     const AI_URL_STORAGE_KEY = 'ai_api_url';
     const MODEL_STORAGE_KEY = 'ai_model';
+    const AUTH_TOKEN_STORAGE_KEY = 'auth_token';
+    const USER_MODE_STORAGE_KEY = 'user_mode'; // 'local' or 'cloud'
+    const USERNAME_STORAGE_KEY = 'cloud_username';
+    
+    // Initialize user mode and auth token
+    let authToken = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || null;
+    let userMode = localStorage.getItem(USER_MODE_STORAGE_KEY) || 'local'; // default to local mode
 
     // Theme management
     function loadTheme() {
@@ -126,30 +141,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateThemeToggleUI(theme) {
-        const lightIcon = themeToggle.querySelector('.light-icon');
-        const darkIcon = themeToggle.querySelector('.dark-icon');
+        if (!themeToggle) return; // Exit if themeToggle element doesn't exist
+        
+        const themeIcon = themeToggle.querySelector('.theme-icon');
 
-        if (theme === 'light') {
-            lightIcon.style.display = 'none';
-            darkIcon.style.display = 'inline';
-            themeToggle.title = 'Switch to dark mode';
-        } else {
-            lightIcon.style.display = 'inline';
-            darkIcon.style.display = 'none';
-            themeToggle.title = 'Switch to light mode';
+        if (themeIcon) {
+            if (theme === 'light') {
+                themeIcon.textContent = '☀️';
+                themeToggle.title = 'Switch to dark mode';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeToggle.title = 'Switch to light mode';
+            }
         }
     }
 
     if (themeToggle) {
         themeToggle.addEventListener('click', () => {
-            console.log('Theme toggle clicked');
             const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
             const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
             document.documentElement.setAttribute('data-theme', newTheme);
             localStorage.setItem('theme', newTheme);
             updateThemeToggleUI(newTheme);
-            console.log('Theme changed to:', newTheme);
         });
     }
 
@@ -160,53 +174,269 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentApiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
     let currentAiUrl = localStorage.getItem(AI_URL_STORAGE_KEY) || 'https://api.openai.com/v1/chat/completions';
     let currentModel = localStorage.getItem(MODEL_STORAGE_KEY) || 'gpt-3.5-turbo';
-    updateApiKeyStatusUI();
+    
+    // Check if there are mode-related elements in the HTML
+    const modeToggles = $$('.mode-toggle');
+    
+    if (modeToggles.length > 0) {
+        // If mode toggles exist in the UI, initialize with saved value
+        userMode = localStorage.getItem(USER_MODE_STORAGE_KEY) || 'local';
+        
+        // Add event listeners for mode toggles
+        modeToggles.forEach(button => {
+            button.addEventListener('click', () => {
+                const mode = button.getAttribute('data-mode');
+                userMode = mode;
+                localStorage.setItem(USER_MODE_STORAGE_KEY, mode);
+                updateUserModeUI();
+            });
+        });
+        
+        // Initialize UI with saved mode
+        updateUserModeUI();
+    }
+    
+    // Set up mode toggle UI update function
+    function updateUserModeUI() {
+        const modeToggle = $(`.mode-toggle[data-mode="${userMode}"]`);
+        if (modeToggle) {
+            $$('.mode-toggle').forEach(btn => btn.classList.remove('active'));
+            modeToggle.classList.add('active');
+        }
+        
+        updateApiKeyStatusUI();
+        updateDialogForMode();
+    }
+    
+
 
     // --- API Key Configuration Dialog Logic ---
     if (openConfigBtn) {
-        openConfigBtn.addEventListener('click', () => {
-            console.log('Config button clicked');
-            // Pre-fill all fields with current values
-            const aiUrlInput = $('#ai-url');
-            const modelInput = $('#model');
+        openConfigBtn.addEventListener('click', async () => {
+            updateDialogForMode();
+            
+            const apiUrlInput = $('#api-url');
+            const modelInput = $('#ai-model');
+            const customModelInput = $('#custom-model');
+            const customModelGroup = $('#custom-model-group');
 
-            if (aiUrlInput) aiUrlInput.value = currentAiUrl || 'https://api.openai.com/v1/chat/completions';
-            if (apiKeyInput) apiKeyInput.value = currentApiKey || '';
-            if (modelInput) modelInput.value = currentModel || 'gpt-3.5-turbo';
+            if (userMode === 'cloud' && authToken) {
+                // Load settings from server for cloud mode
+                try {
+                    const response = await fetch('/api/user-settings', {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${authToken}`
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.settings) {
+                            if (apiUrlInput) apiUrlInput.value = data.settings.apiUrl || '';
+                            if (data.settings.hasApiKey) currentApiKey = 'saved';
+                            if (modelInput) {
+                                const model = data.settings.model || 'gpt-3.5-turbo';
+                                if (['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o', 'claude-3-sonnet', 'claude-3-opus'].includes(model)) {
+                                    modelInput.value = model;
+                                    customModelGroup.style.display = 'none';
+                                } else {
+                                    modelInput.value = 'custom';
+                                    customModelGroup.style.display = 'block';
+                                    if (customModelInput) customModelInput.value = model;
+                                }
+                            }
+                        }
+                    } else {
+                        // Token invalid, clear it and switch to local mode
+                        authToken = null;
+                        localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+                        userMode = 'local';
+                        localStorage.setItem(USER_MODE_STORAGE_KEY, 'cloud');
+                        updateUserModeUI();
+                    }
+                } catch (error) {
+                    console.error('Error loading cloud settings:', error);
+                }
+            } else if (userMode === 'local') {
+                // Load from localStorage for local mode
+                if (apiUrlInput) apiUrlInput.value = currentAiUrl || 'https://api.openai.com/v1/chat/completions';
+                // Keep apiKey input empty for security, but remember it's configured
+                if (apiKeyInput) apiKeyInput.value = '';
+                if (modelInput) {
+                    if (['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o', 'claude-3-sonnet', 'claude-3-opus'].includes(currentModel)) {
+                        modelInput.value = currentModel;
+                        customModelGroup.style.display = 'none';
+                    } else {
+                        modelInput.value = 'custom';
+                        customModelGroup.style.display = 'block';
+                        if (customModelInput) customModelInput.value = currentModel;
+                    }
+                }
+                // Update API key status text to show it's already configured
+                if (currentApiKey) {
+                    apiKeyStatusText.textContent = 'Local Mode - API Key Configured';
+                    $('.dot', apiKeyStatus)?.classList.remove('not-configured');
+                    $('.dot', apiKeyStatus)?.classList.add('configured');
+                }
+            }
 
             if (configDialog) {
                 configDialog.classList.add('active');
-                console.log('Dialog opened, active class added');
             }
-            if (aiUrlInput) aiUrlInput.focus();
+            if (apiUrlInput) apiUrlInput.focus();
+        });
+    }
+ 
+    if (cancelConfigBtn) {
+        cancelConfigBtn.addEventListener('click', () => {
+            if (configDialog) configDialog.classList.remove('active');
+            if (apiKeyInput) apiKeyInput.value = '';
         });
     }
 
-    if (cancelConfigBtn) {
-        cancelConfigBtn.addEventListener('click', () => {
-            console.log('Cancel button clicked');
-            if (configDialog) configDialog.classList.remove('active');
-            if (apiKeyInput) apiKeyInput.value = '';
+    if (authModeToggle) {
+        authModeToggle.addEventListener('click', () => {
+            isLoginMode = !isLoginMode;
+            authModeToggle.textContent = isLoginMode ? 'Switch to Register' : 'Switch to Login';
+            $('#save-settings-btn').textContent = isLoginMode ? 'Login' : 'Register';
+            dialogTitle.textContent = isLoginMode ? 'Login' : 'Create Account';
+            dialogDescription.textContent = isLoginMode 
+                ? 'Login to access your cloud settings.' 
+                : 'Create an account to save your AI settings in the cloud.';
         });
     }
 
     if (configDialog) {
         configDialog.addEventListener('click', (e) => {
             if (e.target === configDialog) {
-                console.log('Dialog overlay clicked');
                 configDialog.classList.remove('active');
                 if (apiKeyInput) apiKeyInput.value = '';
             }
         });
     }
 
+    // Model select change handler - show/hide custom model input
+    const modelInput = $('#ai-model');
+    const customModelGroup = $('#custom-model-group');
+    if (modelInput && customModelGroup) {
+        modelInput.addEventListener('change', () => {
+            if (modelInput.value === 'custom') {
+                customModelGroup.style.display = 'block';
+            } else {
+                customModelGroup.style.display = 'none';
+            }
+        });
+    }
+
+    function updateDialogForMode() {
+        const authFields = $('#auth-fields');
+        const apiFields = $('#api-fields');
+        const saveBtn = $('#save-settings-btn');
+        
+        if (userMode === 'cloud') {
+            if (!authToken) {
+                // Show login/register form
+                authFields.style.display = 'block';
+                apiFields.style.display = 'none';
+                dialogTitle.textContent = isLoginMode ? 'Login' : 'Create Account';
+                dialogDescription.textContent = isLoginMode 
+                    ? 'Login to access your cloud settings.' 
+                    : 'Create an account to save your AI settings in the cloud.';
+                saveBtn.textContent = isLoginMode ? 'Login' : 'Register';
+            } else {
+                // Show API settings form for cloud mode
+                authFields.style.display = 'none';
+                apiFields.style.display = 'block';
+                dialogTitle.textContent = 'Configure AI Settings';
+                dialogDescription.textContent = 'Configure your AI API settings. These settings are stored securely on the server.';
+                saveBtn.textContent = 'Save Settings';
+            }
+        } else {
+            // Local mode - show API settings form
+            authFields.style.display = 'none';
+            apiFields.style.display = 'block';
+            dialogTitle.textContent = 'Configure AI Settings';
+            dialogDescription.textContent = 'Configure your AI API settings.';
+            saveBtn.textContent = 'Save Settings';
+        }
+    }
+
     configForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const newAiUrl = $('#ai-url').value.trim();
+        
+        if (userMode === 'cloud' && !authToken) {
+            // Handle login/register
+            const username = $('#username').value.trim();
+            const password = $('#password').value.trim();
+            
+            if (!username || !password) {
+                showNotification('Username and password are required.', NotificationTypes.WARNING, 'Validation Error');
+                return;
+            }
+            
+            const endpoint = isLoginMode ? '/api/login' : '/api/register';
+            const btn = $('#save-settings-btn');
+            const originalText = btn.textContent;
+            btn.textContent = isLoginMode ? 'Logging in...' : 'Creating account...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Authentication failed');
+                }
+                
+                authToken = data.token;
+                localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, authToken);
+                localStorage.setItem(USERNAME_STORAGE_KEY, username);
+                localStorage.setItem(USER_MODE_STORAGE_KEY, 'cloud');
+                userMode = 'cloud';
+                
+                showNotification(isLoginMode ? 'Login successful!' : 'Account created successfully!', NotificationTypes.SUCCESS, 'Success');
+                updateUserModeUI();
+                configDialog.classList.remove('active');
+                
+                // Clear form
+                $('#username').value = '';
+                $('#password').value = '';
+                
+                // Refresh dialog to show API settings
+                updateDialogForMode();
+                
+            } catch (error) {
+                showNotification(error.message, NotificationTypes.ERROR, 'Authentication Error');
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+            return;
+        }
+        
+        // Handle API settings save (local mode or cloud mode with token)
+        const newAiUrl = $('#api-url').value.trim();
         const newApiKey = apiKeyInput.value.trim();
-        const newModel = $('#model').value.trim();
+        const newModel = $('#ai-model').value.trim();
+        const customModel = $('#custom-model').value.trim();
 
-        if (!newApiKey) {
+        if (!newApiKey && userMode === 'local') {
+            // Keep existing API key if not changed
+            if (currentApiKey) {
+                // Keep using the saved API key
+            } else {
+                showNotification('API Key cannot be empty.', NotificationTypes.WARNING, 'Validation Error');
+                return;
+            }
+        }
+
+        if (!newApiKey && userMode === 'cloud') {
             showNotification('API Key cannot be empty.', NotificationTypes.WARNING, 'Validation Error');
             return;
         }
@@ -214,54 +444,68 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show loading state
         const saveBtn = $('.btn-save');
         const originalBtnText = saveBtn.textContent;
-        saveBtn.textContent = 'Testing...';
+        saveBtn.textContent = 'Saving...';
         saveBtn.disabled = true;
 
         try {
-            // Test the configuration by calling the server endpoint
-            const response = await fetch('/api/ai-settings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    settings: {
-                        apiUrl: newAiUrl,
+            if (userMode === 'cloud' && authToken) {
+                // Save to server for cloud mode
+                const response = await fetch('/api/user-settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        apiUrl: newAiUrl || '',
                         apiKey: newApiKey,
-                        model: newModel
+                        model: newModel === 'custom' ? customModel : newModel
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        // Token invalid
+                        authToken = null;
+                        localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+                        showNotification('Session expired. Please login again.', NotificationTypes.WARNING, 'Session Expired');
+                        updateUserModeUI();
+                        return;
                     }
-                })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to validate API settings');
+                    throw new Error(data.error || 'Failed to save settings');
+                }
+                
+                currentApiKey = newApiKey;
+                currentAiUrl = newAiUrl;
+                currentModel = newModel === 'custom' ? customModel : newModel;
+            } else {
+                // Save to localStorage for local mode
+                // Only update API key if user provided a new one
+                const finalApiKey = newApiKey || currentApiKey;
+                localStorage.setItem(API_KEY_STORAGE_KEY, finalApiKey);
+                localStorage.setItem(AI_URL_STORAGE_KEY, newAiUrl);
+                localStorage.setItem(MODEL_STORAGE_KEY, newModel === 'custom' ? customModel : newModel);
+                
+                currentApiKey = finalApiKey;
+                currentAiUrl = newAiUrl;
+                currentModel = newModel === 'custom' ? customModel : newModel;
             }
-
-            // Save all settings to localStorage
-            localStorage.setItem(API_KEY_STORAGE_KEY, newApiKey);
-            localStorage.setItem(AI_URL_STORAGE_KEY, newAiUrl);
-            localStorage.setItem(MODEL_STORAGE_KEY, newModel);
-            
-            // Update current variables
-            currentApiKey = newApiKey;
-            currentAiUrl = newAiUrl;
-            currentModel = newModel;
             
             updateApiKeyStatusUI();
             configDialog.classList.remove('active');
             
             // Clear form
             apiKeyInput.value = '';
-            $('#ai-url').value = '';
-            $('#model').value = '';
+            $('#api-url').value = '';
+            $('#ai-model').value = '';
+            $('#custom-model').value = '';
             
-            addMessageToChat('System', 'AI Settings configured successfully! ' + data.message, 'assistant');
-            showNotification('AI Settings configured successfully!', NotificationTypes.SUCCESS, 'Success');
+            showNotification('AI Settings saved successfully!', NotificationTypes.SUCCESS, 'Success');
         } catch (error) {
-            console.error('Error configuring AI settings:', error);
-            showNotification(error.message, NotificationTypes.ERROR, 'Configuration Error');
+            console.error('Error saving AI settings:', error);
+            showNotification(error.message, NotificationTypes.ERROR, 'Save Error');
         } finally {
             // Restore button state
             saveBtn.textContent = originalBtnText;
@@ -270,16 +514,48 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function updateApiKeyStatusUI() {
-        if (currentApiKey) {
-            apiKeyStatusText.textContent = 'API Key Configured';
-            $('.dot', apiKeyStatus).classList.remove('not-configured');
-            $('.dot', apiKeyStatus).classList.add('configured');
-            sendBtn.disabled = false;
+        if (modeToggles.length > 0) {
+            // If mode toggles exist, show status based on mode
+            if (userMode === 'local') {
+                if (currentApiKey) {
+                    apiKeyStatusText.textContent = 'Local Mode - API Key Configured';
+                    $('.dot', apiKeyStatus).classList.remove('not-configured');
+                    $('.dot', apiKeyStatus).classList.add('configured');
+                    sendBtn.disabled = false;
+                } else {
+                    apiKeyStatusText.textContent = 'Local Mode - API Key Not Configured';
+                    $('.dot', apiKeyStatus).classList.remove('configured');
+                    $('.dot', apiKeyStatus).classList.add('not-configured');
+                    sendBtn.disabled = true;
+                }
+            } else {
+                // Cloud mode
+                if (authToken) {
+                    const username = localStorage.getItem(USERNAME_STORAGE_KEY) || 'User';
+                    apiKeyStatusText.textContent = `Cloud Mode - ${username}`;
+                    $('.dot', apiKeyStatus).classList.remove('not-configured');
+                    $('.dot', apiKeyStatus).classList.add('configured');
+                    sendBtn.disabled = false;
+                } else {
+                    apiKeyStatusText.textContent = 'Cloud Mode - Not Authenticated';
+                    $('.dot', apiKeyStatus).classList.remove('configured');
+                    $('.dot', apiKeyStatus).classList.add('not-configured');
+                    sendBtn.disabled = true;
+                }
+            }
         } else {
-            apiKeyStatusText.textContent = 'API Key Not Configured';
-            $('.dot', apiKeyStatus).classList.remove('configured');
-            $('.dot', apiKeyStatus).classList.add('not-configured');
-            sendBtn.disabled = true;
+            // If no mode toggles, just check for API key
+            if (currentApiKey) {
+                apiKeyStatusText.textContent = 'API Key Configured';
+                $('.dot', apiKeyStatus).classList.remove('not-configured');
+                $('.dot', apiKeyStatus).classList.add('configured');
+                sendBtn.disabled = false;
+            } else {
+                apiKeyStatusText.textContent = 'API Key Not Configured';
+                $('.dot', apiKeyStatus).classList.remove('configured');
+                $('.dot', apiKeyStatus).classList.add('not-configured');
+                sendBtn.disabled = true;
+            }
         }
     }
 
@@ -288,26 +564,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Create message group container
         const messageGroup = document.createElement('div');
         messageGroup.classList.add('message-group');
-        
-        // Create sticky header for the question
-        const questionHeader = document.createElement('div');
-        questionHeader.classList.add('question-header');
-        questionHeader.innerHTML = `
-            <span>Q: ${messageText}</span>
-            <button class="hide-header-btn" title="Hide header">×</button>
-        `;
-        
-        // Add hide functionality
-        const hideBtn = questionHeader.querySelector('.hide-header-btn');
-        hideBtn.addEventListener('click', () => {
-            questionHeader.classList.add('hidden');
-        });
-        
-        messageGroup.appendChild(questionHeader);
-        
-        // Store reference for scroll handling
-        currentMessageGroup = questionHeader;
-        
+
         return messageGroup;
     }
 
@@ -399,13 +656,34 @@ document.addEventListener('DOMContentLoaded', () => {
         const userMessageText = messageInput.value.trim();
         if (!userMessageText) return;
 
-        if (!currentApiKey) {
-            showNotification('Please configure your AI API Key first.', NotificationTypes.WARNING, 'API Key Required');
-            // Open config dialog automatically
-            if (openConfigBtn) {
-                openConfigBtn.click();
+        // Check if user is authenticated and in the right mode
+        if (modeToggles.length > 0) {
+            // With mode toggles, check based on current mode
+            if (userMode === 'local' && !currentApiKey) {
+                showNotification('Please configure your AI API Key first.', NotificationTypes.WARNING, 'API Key Required');
+                // Open config dialog automatically
+                if (openConfigBtn) {
+                    openConfigBtn.click();
+                }
+                return;
+            } else if (userMode === 'cloud' && !authToken) {
+                showNotification('Please authenticate in cloud mode first.', NotificationTypes.WARNING, 'Authentication Required');
+                // Open config dialog automatically
+                if (openConfigBtn) {
+                    openConfigBtn.click();
+                }
+                return;
             }
-            return;
+        } else {
+            // Without mode toggles, just check for API key
+            if (!currentApiKey) {
+                showNotification('Please configure your AI API Key first.', NotificationTypes.WARNING, 'API Key Required');
+                // Open config dialog automatically
+                if (openConfigBtn) {
+                    openConfigBtn.click();
+                }
+                return;
+            }
         }
 
         addMessageToChat('You', userMessageText, 'user');
@@ -421,30 +699,98 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         try {
-            const response = await fetch('/api/ai-chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    apiKey: currentApiKey,
-                    message: userMessageText,
-                    aiUrl: currentAiUrl,
-                    model: currentModel
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`AI API request failed with status: ${response.status}, message: ${await response.text()}`);
+            let reply;
+            
+            // Direct API call to AI service if in local mode
+            if (userMode === 'local') {
+                try {
+                    // Determine if this is an OpenAI-compatible API or requires different key handling
+                    const isStandardOpenAIAPI = currentAiUrl.includes('openai.com') || currentAiUrl.includes('api.openai.com');
+                    
+                    const requestBody = {
+                        model: currentModel,
+                        messages: [{ role: 'user', content: userMessageText }],
+                        max_tokens: 150,
+                        temperature: 0.7
+                    };
+                    
+                    // For some APIs like MiniMax, Anthropic, etc., the API key might need to be in the request body
+                    if (!isStandardOpenAIAPI) {
+                        requestBody.api_key = currentApiKey;
+                    }
+                    
+                    const requestHeaders = {
+                        'Content-Type': 'application/json'
+                    };
+                    
+                    // Only add Authorization header for OpenAI-style APIs
+                    if (isStandardOpenAIAPI) {
+                        requestHeaders['Authorization'] = `Bearer ${currentApiKey}`;
+                    } else {
+                        // For other APIs, use specific header if needed
+                        if (currentAiUrl.includes('minimax')) {
+                            requestHeaders['Authorization'] = `Bearer ${currentApiKey}`;
+                        } else if (currentAiUrl.includes('anthropic')) {
+                            requestHeaders['x-api-key'] = currentApiKey;
+                            requestHeaders['anthropic-version'] = '2023-06-01';
+                        } else {
+                            // Default to Authorization header if no specific format is known
+                            requestHeaders['Authorization'] = `Bearer ${currentApiKey}`;
+                        }
+                    }
+                    
+                    const aiResponse = await fetch(currentAiUrl, {
+                        method: 'POST',
+                        headers: requestHeaders,
+                        body: JSON.stringify(requestBody)
+                    });
+                    
+                    if (!aiResponse.ok) {
+                        const errorData = await aiResponse.json().catch(() => ({
+                            error: { message: `HTTP ${aiResponse.status}: ${aiResponse.statusText}` }
+                        }));
+                        throw new Error(errorData.error?.message || `AI API request failed with status: ${aiResponse.status}`);
+                    }
+                    
+                    const aiData = await aiResponse.json();
+                    reply = aiData.choices?.[0]?.message?.content?.trim() || 'AI did not provide a response.';
+                } catch (networkError) {
+                    // Handle network errors (e.g., DNS resolution failure, network connectivity issues)
+                    if (networkError instanceof TypeError && networkError.message.includes('fetch')) {
+                        throw new Error(`Network error: Unable to reach ${currentAiUrl}. Please check your API URL and network connection.`);
+                    } else {
+                        throw networkError;
+                    }
+                }
+            } else {
+                // Use backend API for cloud mode
+                const response = await fetch('/api/ai-chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: userMessageText,
+                        useCloud: true,
+                        authToken: authToken
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`AI API request failed: ${errorText}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                reply = data.reply;
             }
-
-            const data = await response.json();
-
-            if (data.error) {
-                throw new Error(data.error);
-            }
-
-            addMessageToChat('AI', data.reply, 'assistant');
+            
+            addMessageToChat('AI', reply, 'assistant');
         } catch (error) {
             console.error('Error communicating with AI:', error);
             addMessageToChat('System', `Error: ${error.message}`, 'assistant');

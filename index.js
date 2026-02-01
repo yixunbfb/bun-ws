@@ -1,7 +1,16 @@
 import { serve } from "bun";
-import { join } from "path";
-import { createHash } from "crypto";
-import { connect } from "net";
+import { connect } from "node:net";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import {
+  authenticateUser,
+  createSession,
+  createUser,
+  getSettingsByToken,
+  getUserSettingsByUserId,
+  saveSettingsByToken,
+  validateSession,
+} from "./db.js";
 
 // Environment Variables
 const UUID = process.env.UUID || "8ea48d91-eab2-4dfa-9169-859b0d43b3dc";
@@ -90,7 +99,7 @@ function establishTcpConnection(ws, host, port, payload) {
 // Parse address from packet
 // vless atyp=1,2,3 Trojan atyp=1,3,4
 function parseAddress(atyp, buffer, offset) {
-  let host, port;
+  let host;
   if (atyp === 1) {
     //IPv4
     host = buffer.slice(offset, offset + 4).join(".");
@@ -105,7 +114,7 @@ function parseAddress(atyp, buffer, offset) {
     //IPv6
     host = buffer
       .slice(offset, offset + 16)
-      .reduce((s, b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s), [])
+      .reduce((s, _b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s), [])
       .map((b) => b.readUInt16BE(0).toString(16))
       .join(":");
     offset += 16;
@@ -133,7 +142,7 @@ function handleVlessConnection(ws, msg) {
     const optLength = msg[pos++];
     pos += optLength; // Skip options
 
-    const command = msg[pos++]; // 1=TCP, 2=UDP
+    const _command = msg[pos++]; // 1=TCP, 2=UDP
     const port = (msg[pos++] << 8) | msg[pos++];
     const atyp = msg[pos++];
 
@@ -150,7 +159,7 @@ function handleVlessConnection(ws, msg) {
     establishTcpConnection(ws, host, port, payload);
 
     return true;
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -193,7 +202,7 @@ function handleTrojanConnection(ws, msg) {
     establishTcpConnection(ws, host, port, payload);
 
     return true;
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -207,7 +216,7 @@ function getSub() {
   const vlessURL = `vless://${UUID}@${DOMAIN}:443${commonParams}&encryption=none`;
   const trojanURL = `trojan://${UUID}@${DOMAIN}:443${commonParams}`;
 
-  return Buffer.from(vlessURL + "\n" + trojanURL).toString("base64");
+  return Buffer.from(`${vlessURL}\n${trojanURL}`).toString("base64");
 }
 
 /**
@@ -222,7 +231,7 @@ serve({
   reusePort: true,
   development: false,
 
-  async fetch(req, server) {
+  async fetch(req, _server) {
     const url = new URL(req.url);
 
     try {
@@ -234,7 +243,7 @@ serve({
       // 0.3. AI Chat API endpoint (New)
       if (url.pathname === `/api/ai-chat` && req.method === "POST") {
         try {
-          const { apiKey, message, model, apiUrl } = await req.json();
+          const { apiKey, message, model, apiUrl, useCloud, authToken } = await req.json();
 
           if (!message) {
             return new Response(
@@ -243,37 +252,55 @@ serve({
             );
           }
 
-          // Use provided API key or fall back to environment variable
-          const finalApiKey = apiKey || AI_API_KEY;
+          let finalApiKey, finalApiUrl, finalModel;
+
+          if (useCloud && authToken) {
+            const settings = getSettingsByToken(authToken);
+            if (!settings || !settings.api_key) {
+              return new Response(
+                JSON.stringify({ error: "Cloud mode: No API settings found. Please configure your AI settings in cloud mode." }),
+                { status: 400, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            finalApiKey = settings.api_key;
+            finalApiUrl = settings.api_url || AI_API_URL;
+            finalModel = settings.model || AI_MODEL;
+          } else {
+            finalApiKey = apiKey || AI_API_KEY;
+            finalApiUrl = apiUrl || AI_API_URL;
+            finalModel = model || AI_MODEL;
+          }
+
           if (!finalApiKey) {
             return new Response(
-              JSON.stringify({ error: "API Key is required. Configure it in .env or provide in request." }),
+              JSON.stringify({ error: "API Key is required." }),
               { status: 400, headers: { "Content-Type": "application/json" } },
             );
           }
 
           // Call AI API (OpenAI-compatible)
+          const requestBody = {
+            model: finalModel,
+            messages: [{ role: "user", content: message }],
+            max_tokens: 150,
+            temperature: 0.7,
+          };
+
           const aiResponse = await fetch(
-            apiUrl || AI_API_URL,
+            finalApiUrl,
             {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${finalApiKey}`,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({
-                model: model || AI_MODEL,
-                messages: [{ role: "user", content: message }],
-                max_tokens: 150,
-                temperature: 0.7,
-              }),
+              body: JSON.stringify(requestBody),
             },
           );
 
           const aiData = await aiResponse.json();
 
           if (!aiResponse.ok) {
-            console.error("OpenAI API Error:", aiData);
             return new Response(
               JSON.stringify({
                 error: aiData.error?.message || "AI API call failed.",
@@ -294,7 +321,6 @@ serve({
             headers: { "Content-Type": "application/json" },
           });
         } catch (error) {
-          console.error("Error in /api/ai-chat handler:", error);
           return new Response(
             JSON.stringify({
               error: "Internal server error processing AI request.",
@@ -302,6 +328,215 @@ serve({
             { status: 500, headers: { "Content-Type": "application/json" } },
           );
         }
+      }
+      
+      // User Registration
+      if (url.pathname === "/api/register" && req.method === "POST") {
+        try {
+          const { username, password } = await req.json();
+          if (!username || !password) {
+            return new Response(
+              JSON.stringify({ error: "Username and password are required." }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          const result = createUser(username, password);
+          if (result.success) {
+            const token = createSession(result.userId);
+            return new Response(JSON.stringify({ success: true, token, userId: result.userId }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ error: result.error }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // User Login
+      if (url.pathname === "/api/login" && req.method === "POST") {
+        try {
+          const { username, password } = await req.json();
+          if (!username || !password) {
+            return new Response(
+              JSON.stringify({ error: "Username and password are required." }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          const result = authenticateUser(username, password);
+          if (result.authenticated) {
+            const token = createSession(result.userId);
+            return new Response(JSON.stringify({ success: true, token, userId: result.userId }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ error: "Invalid credentials" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" } },
+          );
+        }
+      }
+
+      // Get user settings (for cloud mode)
+      if (url.pathname === "/api/user-settings" && req.method === "GET") {
+        const authHeader = req.headers.get("Authorization");
+        const token = authHeader?.replace("Bearer ", "");
+        
+        if (!token) {
+          return new Response(JSON.stringify({ error: "Token required" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const session = validateSession(token);
+        
+        if (!session) {
+          return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const settings = getUserSettingsByUserId(session.user_id);
+        
+        return new Response(JSON.stringify({ 
+          username: session.username,
+          hasSettings: !!settings,
+          settings: settings ? {
+            apiUrl: settings.api_url,
+            model: settings.model,
+            hasApiKey: !!settings.api_key
+          } : null
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Get user settings (for cloud mode)
+      if (url.pathname === "/api/user-settings" && req.method === "GET") {
+        const authHeader = req.headers.get("Authorization");
+        const token = authHeader?.replace("Bearer ", "");
+        
+        if (!token) {
+          return new Response(JSON.stringify({ error: "Token required" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const session = validateSession(token);
+        
+        if (!session) {
+          return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const settings = getUserSettingsByUserId(session.user_id);
+        
+        return new Response(JSON.stringify({ 
+          username: session.username,
+          hasSettings: !!settings,
+          settings: settings ? {
+            apiUrl: settings.api_url,
+            model: settings.model,
+            hasApiKey: !!settings.api_key
+          } : null
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Save user settings (for cloud mode)
+      if (url.pathname === "/api/user-settings" && req.method === "POST") {
+        const authHeader = req.headers.get("Authorization");
+        const token = authHeader?.replace("Bearer ", "");
+        
+        if (!token) {
+          return new Response(JSON.stringify({ error: "Token required" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const body = await req.json();
+        const { apiUrl, apiKey, model, settings } = body;
+        
+        // Support both formats: { apiUrl, apiKey, model } or { settings: { apiUrl, apiKey, model } }
+        const newApiUrl = settings?.apiUrl ?? apiUrl;
+        const newApiKey = settings?.apiKey ?? apiKey;
+        const newModel = settings?.model ?? model;
+        
+        if (!newApiKey) {
+          // Get existing settings, don't clear apiKey
+          const session = validateSession(token);
+          if (!session) {
+            return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          const existingSettings = getUserSettingsByUserId(session.user_id);
+          
+          if (!existingSettings?.api_key) {
+            return new Response(JSON.stringify({ error: "API Key is required" }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          
+          // Update only apiUrl and model, keep existing apiKey
+          const result = saveSettingsByToken(token, newApiUrl, existingSettings.api_key, newModel);
+          
+          if (result.success) {
+            return new Response(JSON.stringify({ success: true, message: "URL and model updated" }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ error: result.error }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        
+        const result = saveSettingsByToken(token, newApiUrl, newApiKey, newModel);
+        
+        if (result.success) {
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Logout
+      if (url.pathname === "/api/logout" && req.method === "POST") {
+        const authHeader = req.headers.get("Authorization");
+        const token = authHeader?.replace("Bearer ", "");
+        if (token) {
+          deleteSession(token);
+        }
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }
       
       // 0.2. Config API endpoint (New)
@@ -320,7 +555,7 @@ serve({
         });
       }
 
-      // 0.4. AI Settings API endpoints (New)
+      // 0.4. AI Settings API endpoints (Legacy - for backward compatibility)
       if (url.pathname === `/api/ai-settings`) {
         if (req.method === "GET") {
           // Return current AI settings (without sensitive API key)
@@ -336,23 +571,24 @@ serve({
         }
         
         if (req.method === "POST") {
-          // Save client-specific settings (handled by frontend storage)
-          const { settings } = await req.json();
+          const body = await req.json();
+          const { settings, apiUrl, apiKey, model } = body;
           
-          // This endpoint just validates and echoes back the settings
-          // Actual storage is handled by the client using localStorage/sessionStorage
-          if (!settings) {
+          // Support both old format { settings: {...} } and new format { apiUrl, apiKey, model }
+          if (!settings && (!apiUrl || !apiKey)) {
             return new Response(
               JSON.stringify({ error: "Settings data is required." }),
               { status: 400, headers: { "Content-Type": "application/json" } },
             );
           }
           
+          const finalSettings = settings || { apiUrl, apiKey, model };
+          
           return new Response(JSON.stringify({ 
             success: true, 
             message: "Settings validated successfully",
             settings: {
-              ...settings,
+              ...finalSettings,
               // Don't return sensitive information
               apiKey: undefined 
             }
@@ -387,7 +623,7 @@ serve({
       }
 
       // 3. Static File Serving with Bun native methods
-      let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
+      const filePath = url.pathname === "/" ? "/index.html" : url.pathname;
       const fullPath = join(STATIC_DIR, filePath);
 
       // Use Bun.file() for efficient static file serving with automatic MIME type detection
@@ -460,7 +696,7 @@ serve({
         // Ensure socket is writable
         try {
           ws.data.socket.write(Buffer.from(msg));
-        } catch (e) {
+        } catch (_e) {
           ws.close();
         }
         return;
