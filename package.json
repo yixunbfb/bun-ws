@@ -1,36 +1,36 @@
 {
-  "name": "bun-ws",
-  "version": "1.0.0",
-  "description": "High-performance WebSocket proxy server based on Bun runtime with VLESS/Trojan protocols",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "start": "bun run index.js",
-    "dev": "bun --watch index.js",
-    "test": "bun test",
-    "lint": "bunx @biomejs/biome check .",
-    "build": "echo \"Build complete - Static files in public/ directory\""
-  },
-  "keywords": [
-    "bun",
-    "websocket",
-    "proxy",
-    "vless",
-    "trojan",
-    "vpn",
-    "reverse-proxy"
-  ],
-  "author": "bun-ws contributors",
-  "license": "Apache-2.0",
-  "engines": {
-    "bun": ">=1.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yixunbfb/bun-ws.git"
-  },
-  "bugs": {
-    "url": "https://github.com/yixunbfb/bun-ws/issues"
-  },
-  "homepage": "https://github.com/yixunbfb/bun-ws#readme"
+	"name": "bun-ws",
+	"version": "1.0.0",
+	"description": "High-performance WebSocket proxy server based on Bun runtime with VLESS/Trojan protocols",
+	"main": "index.js",
+	"type": "module",
+	"scripts": {
+		"start": "bun run index.js",
+		"dev": "bun --watch index.js",
+		"test": "bun test",
+		"lint": "bunx @biomejs/biome check .",
+		"build": "echo \"Build complete - Static files in public/ directory\""
+	},
+	"keywords": [
+		"bun",
+		"websocket",
+		"proxy",
+		"vless",
+		"trojan",
+		"vpn",
+		"reverse-proxy"
+	],
+	"author": "bun-ws contributors",
+	"license": "Apache-2.0",
+	"engines": {
+		"bun": ">=1.0.0"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/yixunbfb/bun-ws.git"
+	},
+	"bugs": {
+		"url": "https://github.com/yixunbfb/bun-ws/issues"
+	},
+	"homepage": "https://github.com/yixunbfb/bun-ws#readme"
 }

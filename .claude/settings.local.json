@@ -1,7 +1,5 @@
 {
-  "permissions": {
-    "allow": [
-      "Skill(superpowers:using-superpowers)"
-    ]
-  }
+	"permissions": {
+		"allow": ["Skill(superpowers:using-superpowers)"]
+	}
 }
