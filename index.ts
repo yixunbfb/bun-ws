@@ -11,7 +11,39 @@ const STATIC_DIR = `${import.meta.dir}/public`;
 
 const uuid = UUID.replace(/-/g, "");
 
-async function resolveHost(host) {
+// --- Backpressure thresholds ---
+/** Pause TCP reads when WebSocket bufferedAmount exceeds this. */
+const WS_HIGH_WATER = 1024 * 1024; // 1 MiB
+/** Resume TCP reads when WebSocket bufferedAmount drops below this. */
+const WS_LOW_WATER = 256 * 1024; // 256 KiB
+/** Max bytes queued waiting for TCP socket drain (WS→TCP). */
+const TCP_WRITE_QUEUE_MAX = 4 * 1024 * 1024; // 4 MiB
+
+interface WsData {
+	socket: any | null;
+	/** True while TCP socket is paused due to WS backpressure. */
+	tcpPaused: boolean;
+	/** True while WS→TCP writes are blocked (TCP kernel buffer full). */
+	wsPaused: boolean;
+	/** Buffered chunks waiting for TCP drain. */
+	tcpWriteQueue: Uint8Array[];
+	tcpWriteQueuedBytes: number;
+	/** Protocol established (VLESS or Trojan) — prevents race condition. */
+	established: boolean;
+}
+
+function newWsData(): WsData {
+	return {
+		socket: null,
+		tcpPaused: false,
+		wsPaused: false,
+		tcpWriteQueue: [],
+		tcpWriteQueuedBytes: 0,
+		established: false,
+	};
+}
+
+async function resolveHost(host: string): Promise<string> {
 	// Try IPv4 first, then IPv6
 	try {
 		const result = await Bun.dns.lookup(host, {
@@ -26,48 +58,164 @@ async function resolveHost(host) {
 				signal: AbortSignal.timeout(3000),
 			});
 			return result[0].address;
-		} catch (error) {
+		} catch (error: any) {
 			throw new Error(`Failed to resolve ${host}: ${error.message}`);
 		}
 	}
 }
 
 /**
- * Establish TCP connection and set up data forwarding
+ * Write data to the TCP socket with backpressure.
+ * If the kernel buffer is full, queue data and pause WS receiving.
  */
-async function establishTcpConnection(ws, host, port, payload) {
+function writeToTcp(ws: any, socket: any, data: Uint8Array): void {
+	const wsd = ws.data as WsData;
+	if (!socket || wsd.wsPaused) {
+		// Queue data while TCP is backed up
+		wsd.tcpWriteQueue.push(data);
+		wsd.tcpWriteQueuedBytes += data.length;
+		if (wsd.tcpWriteQueuedBytes > TCP_WRITE_QUEUE_MAX) {
+			console.error("TCP write queue overflow, closing connection");
+			try { ws.close(); } catch {}
+		}
+		return;
+	}
+
+	let written: number;
+	try {
+		written = socket.write(data);
+	} catch {
+		try { ws.close(); } catch {}
+		return;
+	}
+
+	// Bun: full write returns byte length; -1/0 means blocked
+	if (written === data.length || written === undefined) return;
+
+	if (written === -1 || written === 0) {
+		wsd.tcpWriteQueue.push(data);
+		wsd.tcpWriteQueuedBytes += data.length;
+		wsd.wsPaused = true;
+		return;
+	}
+
+	// Partial write — queue remainder
+	if (written > 0 && written < data.length) {
+		wsd.tcpWriteQueue.push(data.subarray(written));
+		wsd.tcpWriteQueuedBytes += data.length - written;
+		wsd.wsPaused = true;
+	}
+}
+
+/**
+ * Flush queued data to the TCP socket after drain.
+ */
+function flushTcpQueue(ws: any, socket: any): void {
+	const wsd = ws.data as WsData;
+	if (!socket) return;
+
+	while (wsd.tcpWriteQueue.length > 0) {
+		const chunk = wsd.tcpWriteQueue[0];
+		let written: number;
+		try {
+			written = socket.write(chunk);
+		} catch {
+			try { ws.close(); } catch {}
+			return;
+		}
+
+		if (written === -1 || written === 0 || written === undefined) return;
+
+		if (written < chunk.length) {
+			wsd.tcpWriteQueue[0] = chunk.subarray(written);
+			wsd.tcpWriteQueuedBytes -= written;
+			return;
+		}
+
+		wsd.tcpWriteQueue.shift();
+		wsd.tcpWriteQueuedBytes -= chunk.length;
+	}
+
+	// Queue empty — resume WS receiving
+	if (wsd.wsPaused) {
+		wsd.wsPaused = false;
+	}
+}
+
+/**
+ * Forward data from TCP socket to WebSocket with backpressure.
+ * Pauses the TCP socket when WebSocket buffer is full.
+ */
+function forwardTcpToWs(ws: any, socket: any, data: Uint8Array): void {
+	const wsd = ws.data as WsData;
+	try {
+		ws.send(data);
+	} catch {
+		try { socket.end(); } catch {}
+		try { ws.close(); } catch {}
+		return;
+	}
+
+	// Check WebSocket backpressure
+	const buffered = ws.bufferedAmount ?? 0;
+	if (buffered > WS_HIGH_WATER && !wsd.tcpPaused) {
+		wsd.tcpPaused = true;
+		try { socket.pause(); } catch {}
+	}
+}
+
+/**
+ * Establish TCP connection and set up data forwarding with backpressure.
+ */
+async function establishTcpConnection(ws: any, host: string, port: number, payload: Uint8Array) {
 	try {
 		const ip = await resolveHost(host);
-		const _remoteSocket = await Bun.connect({
+		await Bun.connect({
 			hostname: ip,
 			port: port,
 			socket: {
-				open: (socket) => {
+				open: (socket: any) => {
 					// Save socket instance to ws.data
 					ws.data.socket = socket;
 
 					// After connection is established, send any pending payload
-					if (payload.length > 0) socket.write(payload);
+					if (payload.length > 0) {
+						writeToTcp(ws, socket, payload);
+					}
+
+					// Flush any early-data messages that were queued while
+					// TCP connect was in progress (race condition fix)
+					flushTcpQueue(ws, socket);
 				},
-				data: (_socket, data) => {
-					// Forward data from TCP to WebSocket
-					ws.send(data);
+				data: (_socket: any, data: Uint8Array) => {
+					// Forward data from TCP to WebSocket (with backpressure)
+					forwardTcpToWs(ws, _socket, data);
 				},
-				close: () => ws.close(),
-				error: () => ws.close(),
-				drain: () => {},
-				end: () => ws.close(),
+				close: () => {
+					try { ws.close(); } catch {}
+				},
+				error: (_socket: any, error: any) => {
+					console.error("TCP socket error:", error?.message || error);
+					try { ws.close(); } catch {}
+				},
+				drain: (socket: any) => {
+					// TCP kernel buffer has space — flush queued WS→TCP data
+					flushTcpQueue(ws, socket);
+				},
+				end: (_socket: any) => {
+					try { ws.close(); } catch {}
+				},
 			},
 		});
-	} catch (error) {
-		console.error("TCP connection failed:", error);
-		ws.close();
+	} catch (error: any) {
+		console.error("TCP connection failed:", error?.message || error);
+		try { ws.close(); } catch {}
 	}
 }
 
 // Parse address from packet
 // vless atyp=1,2,3 Trojan atyp=1,3,4
-function parseAddress(atyp, buffer, offset) {
+function parseAddress(atyp: number, buffer: Buffer, offset: number): { host: string; offset: number } | false {
 	let host: string;
 	if (atyp === 1) {
 		//IPv4
@@ -84,10 +232,10 @@ function parseAddress(atyp, buffer, offset) {
 		host = buffer
 			.slice(offset, offset + 16)
 			.reduce(
-				(s, _b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s),
+				(s: Buffer[], _b: number, i: number, a: Buffer) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s),
 				[],
 			)
-			.map((b) => b.readUInt16BE(0).toString(16))
+			.map((b: Buffer) => b.readUInt16BE(0).toString(16))
 			.join(":");
 		offset += 16;
 	} else {
@@ -99,14 +247,15 @@ function parseAddress(atyp, buffer, offset) {
 
 /**
  * VLESS Handler
+ * Returns true if the message was handled as VLESS.
  */
-function handleVlessConnection(ws, msg) {
+function handleVlessConnection(ws: any, msg: Buffer): boolean {
 	try {
 		if (msg.length <= 17 || msg[0] !== 0) return false;
 
 		// Validate UUID
 		const id = msg.slice(1, 17);
-		if (!id.every((v, i) => v === parseInt(uuid.slice(i * 2, i * 2 + 2), 16)))
+		if (!id.every((v: number, i: number) => v === parseInt(uuid.slice(i * 2, i * 2 + 2), 16)))
 			return false;
 
 		// Parse Metadata
@@ -118,17 +267,22 @@ function handleVlessConnection(ws, msg) {
 		const port = (msg[pos++] << 8) | msg[pos++];
 		const atyp = msg[pos++];
 
-		const { host, offset } = parseAddress(atyp, msg, pos);
-		pos = offset;
+		const result = parseAddress(atyp, msg, pos);
+		if (!result) return false;
+		pos = result.offset;
 
 		// Acknowledge connection
 		ws.send(new Uint8Array([msg[0], 0]));
 
 		// 4. Get remaining payload from the first packet
-		const payload = msg.slice(pos);
+		const payload = msg.subarray(pos);
 
-		// 5. Establish TCP connection and set up forwarding
-		establishTcpConnection(ws, host, port, payload);
+		// 5. Mark as established BEFORE async TCP connect to avoid race condition
+		//    This prevents early-data messages from being misinterpreted as new protocol headers
+		ws.data.established = true;
+
+		// 6. Establish TCP connection and set up forwarding
+		establishTcpConnection(ws, result.host, port, payload);
 
 		return true;
 	} catch (_e) {
@@ -138,8 +292,9 @@ function handleVlessConnection(ws, msg) {
 
 /**
  * Trojan Handler
+ * Returns true if the message was handled as Trojan.
  */
-async function handleTrojanConnection(ws, msg) {
+async function handleTrojanConnection(ws: any, msg: Buffer): Promise<boolean> {
 	try {
 		if (msg.length < 58) return false;
 
@@ -150,7 +305,7 @@ async function handleTrojanConnection(ws, msg) {
 			new TextEncoder().encode(UUID),
 		);
 		const targetHash = Array.from(new Uint8Array(targetHashBuffer))
-			.map((b) => b.toString(16).padStart(2, "0"))
+			.map((b: number) => b.toString(16).padStart(2, "0"))
 			.join("");
 
 		if (receivedHash.toLowerCase() !== targetHash.toLowerCase()) return false;
@@ -163,10 +318,11 @@ async function handleTrojanConnection(ws, msg) {
 
 		const atyp = msg[pos++];
 
-		const addType = { 1: 1, 3: 2, 4: 3 }; //Ip address type map
+		const addType: Record<number, number> = { 1: 1, 3: 2, 4: 3 }; // Ip address type map
 
-		const { host, offset } = parseAddress(addType[atyp], msg, pos);
-		pos = offset;
+		const result = parseAddress(addType[atyp], msg, pos);
+		if (!result) return false;
+		pos = result.offset;
 
 		const port = (msg[pos++] << 8) | msg[pos++];
 
@@ -174,10 +330,13 @@ async function handleTrojanConnection(ws, msg) {
 		if (pos < msg.length && msg[pos] === 0x0d && msg[pos + 1] === 0x0a)
 			pos += 2;
 
-		const payload = msg.slice(pos);
+		const payload = msg.subarray(pos);
+
+		// Mark as established BEFORE async TCP connect
+		ws.data.established = true;
 
 		// 3. Establish TCP connection and set up forwarding
-		establishTcpConnection(ws, host, port, payload);
+		establishTcpConnection(ws, result.host, port, payload);
 
 		return true;
 	} catch (_e) {
@@ -201,8 +360,6 @@ function getSub() {
  * Server
  */
 console.log(`Server running on port ${PORT}`);
-// console.log(`UUID: ${UUID}`);
-// console.log(`WS Path: /${WSPATH}`);
 
 serve({
 	port: PORT,
@@ -214,7 +371,6 @@ serve({
 
 		try {
 			// Subscription endpoint
-			// console.log(`path: ${url.pathname}, sub_path: /${SUB_PATH}`);
 			if (url.pathname === `/${SUB_PATH}`) {
 				return new Response(getSub(), {
 					status: 200,
@@ -225,11 +381,10 @@ serve({
 				});
 			}
 
-			// console.log(`path: ${url.pathname}, wspath: /${WSPATH}`);
 			// 2. WebSocket Upgrade
 			if (url.pathname === `/${WSPATH}`) {
 				const success = server.upgrade(req, {
-					data: { socket: null }, // Initialize socket data
+					data: newWsData(),
 				});
 				return success
 					? undefined
@@ -270,7 +425,7 @@ serve({
 			}
 
 			return new Response("404 Not Found", { status: 404 });
-		} catch (error) {
+		} catch (error: any) {
 			console.error(`Request handling error: ${error.message}`);
 			return new Response("Internal Server Error", {
 				status: 500,
@@ -283,35 +438,53 @@ serve({
 		// Note: Data is initialized during upgrade in fetch handler
 		open(ws) {
 			// Fallback: Ensure data exists even if upgrade didn't pass it
-			if (!ws.data || typeof ws.data.socket === "undefined") {
-				ws.data = { socket: null };
+			if (!ws.data) {
+				ws.data = newWsData();
 			}
 		},
 		async message(ws, msg) {
-			// Case 1: Connection already established, forward directly
-			if (ws.data.socket) {
-				// Ensure socket is writable
-				try {
-					ws.data.socket.write(Buffer.from(msg));
-				} catch (_e) {
-					ws.close();
+			const wsd = ws.data as WsData;
+
+			// Case 1: Connection already established (or establishing) — forward data to TCP
+			// Using `established` flag instead of `socket` check to avoid race condition:
+			// TCP connect is async; early-data messages may arrive before socket is ready.
+			if (wsd.established) {
+				if (wsd.socket) {
+					// Socket ready — write directly (with backpressure)
+					writeToTcp(ws, wsd.socket, msg instanceof Buffer ? msg : Buffer.from(msg));
+				} else {
+					// TCP connect in progress — queue data, will be sent on open
+					wsd.tcpWriteQueue.push(msg instanceof Buffer ? msg : Buffer.from(msg));
+					wsd.tcpWriteQueuedBytes += msg.length;
 				}
 				return;
 			}
 
-			// NOTE: We must check protocols sequentially.
-			// If one succeeds, we return immediately.
+			// Case 2: First message — try to parse as VLESS or Trojan protocol
+			const buf = msg instanceof Buffer ? msg : Buffer.from(msg);
 
-			if (handleVlessConnection(ws, Buffer.from(msg))) return;
-			if (await handleTrojanConnection(ws, Buffer.from(msg))) return;
+			if (handleVlessConnection(ws, buf)) return;
+			if (await handleTrojanConnection(ws, buf)) return;
 
 			// If neither protocol matched, close the connection.
 			ws.close();
 		},
+		drain(ws) {
+			// WebSocket send buffer has drained — resume TCP reads if paused
+			const wsd = ws.data as WsData;
+			const buffered = ws.bufferedAmount ?? 0;
+			if (buffered < WS_LOW_WATER && wsd.tcpPaused) {
+				wsd.tcpPaused = false;
+				if (wsd.socket) {
+					try { wsd.socket.resume(); } catch {}
+				}
+			}
+		},
 		close(ws) {
 			// When WebSocket closes, destroy the corresponding TCP socket
-			if (ws.data.socket) {
-				ws.data.socket.end();
+			const wsd = ws.data as WsData;
+			if (wsd?.socket) {
+				try { wsd.socket.end(); } catch {}
 			}
 		},
 	},
