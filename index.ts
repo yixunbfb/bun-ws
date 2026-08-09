@@ -12,12 +12,18 @@ const STATIC_DIR = `${import.meta.dir}/public`;
 const uuid = UUID.replace(/-/g, "");
 
 // --- Backpressure thresholds ---
-/** Pause TCP reads when WebSocket bufferedAmount exceeds this. */
+// NOTE: Bun's WebSocket server cannot pause *inbound* frames (no ws.pause(),
+// and async message handlers run concurrently), so client->server data that the
+// TCP peer cannot yet accept MUST be buffered here. The buffer must comfortably
+// exceed the bandwidth-delay product of real paths (git large transfers stall
+// for hundreds of ms while github's TCP window recovers), so the overflow close
+// below is only an OOM safety valve for runaway clients — not a normal event.
+/** Pause TCP reads when WebSocket send buffer exceeds this. */
 const WS_HIGH_WATER = 1024 * 1024; // 1 MiB
-/** Resume TCP reads when WebSocket bufferedAmount drops below this. */
+/** Resume TCP reads when WebSocket send buffer drops below this. */
 const WS_LOW_WATER = 256 * 1024; // 256 KiB
 /** Max bytes queued waiting for TCP socket drain (WS→TCP). */
-const TCP_WRITE_QUEUE_MAX = 4 * 1024 * 1024; // 4 MiB
+const TCP_WRITE_QUEUE_MAX = 64 * 1024 * 1024; // 64 MiB
 
 interface WsData {
 	socket: any | null;
@@ -89,10 +95,16 @@ function writeToTcp(ws: any, socket: any, data: Uint8Array): void {
 		return;
 	}
 
-	// Bun: full write returns byte length; -1/0 means blocked
-	if (written === data.length || written === undefined) return;
+	// Bun: full write returns byte length; -1 means socket closed
+	if (written === data.length) return;
 
-	if (written === -1 || written === 0) {
+	if (written === -1) {
+		// TCP peer is gone — close the tunnel instead of queueing forever
+		try { ws.close(); } catch {}
+		return;
+	}
+
+	if (written === 0) {
 		wsd.tcpWriteQueue.push(data);
 		wsd.tcpWriteQueuedBytes += data.length;
 		wsd.wsPaused = true;
@@ -157,7 +169,7 @@ function forwardTcpToWs(ws: any, socket: any, data: Uint8Array): void {
 	}
 
 	// Check WebSocket backpressure
-	const buffered = ws.bufferedAmount ?? 0;
+	const buffered = ws.getBufferedAmount();
 	if (buffered > WS_HIGH_WATER && !wsd.tcpPaused) {
 		wsd.tcpPaused = true;
 		try { socket.pause(); } catch {}
@@ -436,6 +448,11 @@ serve({
 
 	websocket: {
 		// Note: Data is initialized during upgrade in fetch handler
+		// Large transfers buffer a lot in the send queue (TLS records from the
+		// origin); never close mid-transfer because a client is briefly slow.
+		maxPayloadLength: 64 * 1024 * 1024,
+		backpressureLimit: 64 * 1024 * 1024,
+		closeOnBackpressureLimit: false,
 		open(ws) {
 			// Fallback: Ensure data exists even if upgrade didn't pass it
 			if (!ws.data) {
@@ -472,7 +489,7 @@ serve({
 		drain(ws) {
 			// WebSocket send buffer has drained — resume TCP reads if paused
 			const wsd = ws.data as WsData;
-			const buffered = ws.bufferedAmount ?? 0;
+			const buffered = ws.getBufferedAmount();
 			if (buffered < WS_LOW_WATER && wsd.tcpPaused) {
 				wsd.tcpPaused = false;
 				if (wsd.socket) {
