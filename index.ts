@@ -450,9 +450,12 @@ serve({
 		// Note: Data is initialized during upgrade in fetch handler
 		// Large transfers buffer a lot in the send queue (TLS records from the
 		// origin); never close mid-transfer because a client is briefly slow.
+		// idleTimeout=0: the proxy manages its own lifecycle via ws.close() on
+		// origin close; don't let Bun's 120s default self-close kick in.
 		maxPayloadLength: 64 * 1024 * 1024,
 		backpressureLimit: 64 * 1024 * 1024,
 		closeOnBackpressureLimit: false,
+		idleTimeout: 0,
 		open(ws) {
 			// Fallback: Ensure data exists even if upgrade didn't pass it
 			if (!ws.data) {
@@ -461,6 +464,23 @@ serve({
 		},
 		async message(ws, msg) {
 			const wsd = ws.data as WsData;
+
+			// Application-layer keepalive (Cloudflare WS proxy only resets its
+			// 100s idle timer on DATA frames — control-frame pings are ignored).
+			// The client sends a small text frame on a timer during stalls; we
+			// reply and never forward it, since all real proxied traffic is binary.
+			// Unknown text frames close the connection.
+			if (typeof msg === "string") {
+				try {
+					const obj = JSON.parse(msg);
+					if (obj?.type === "keepalive") {
+						ws.send(JSON.stringify({ type: "keepalive", pong: true }));
+						return;
+					}
+				} catch {}
+				ws.close();
+				return;
+			}
 
 			// Case 1: Connection already established (or establishing) — forward data to TCP
 			// Using `established` flag instead of `socket` check to avoid race condition:
@@ -497,7 +517,10 @@ serve({
 				}
 			}
 		},
-		close(ws) {
+		close(ws, code, reason) {
+			console.error(
+				`[WS-CLOSE] code=${code} reason=${JSON.stringify(reason)} ok=${code === 1000} wsBuffered=${ws.getBufferedAmount()}`,
+			);
 			// When WebSocket closes, destroy the corresponding TCP socket
 			const wsd = ws.data as WsData;
 			if (wsd?.socket) {
