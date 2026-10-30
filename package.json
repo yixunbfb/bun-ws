@@ -1,22 +1,27 @@
 {
 	"name": "bun-ws",
 	"version": "1.0.0",
-	"description": "High-performance WebSocket proxy server based on Bun runtime with VLESS/Trojan protocols",
-	"main": "index.js",
+	"description": "Bun-based WebSocket proxy: VLESS server plus a VLESS client with local SOCKS/HTTP proxy",
+	"main": "server/index.ts",
 	"type": "module",
 	"scripts": {
-		"start": "bun run index.js",
-		"dev": "bun --watch index.js",
+		"start": "bun run server/index.ts",
+		"dev": "bun --watch server/index.ts",
+		"client": "bun run client/bun-vlessclient.ts",
 		"test": "bun test",
+		"test:echo": "bun run scripts/min-echo-test.ts",
+		"test:keepalive": "bun run scripts/keepalive-test.ts",
+		"test:http": "bun run scripts/http-proxy-test.ts",
+		"test:transfer": "bun run scripts/large-transfer-test.ts",
 		"lint": "bunx @biomejs/biome check .",
-		"build": "bun build index.ts --outdir ./dist --target bun --minify"
+		"build": "bun build server/index.ts --outdir ./dist --target bun --minify"
 	},
 	"keywords": [
 		"bun",
 		"websocket",
 		"proxy",
 		"vless",
-		"trojan",
+		"socks5",
 		"vpn",
 		"reverse-proxy"
 	],

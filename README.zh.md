@@ -1,344 +1,184 @@
-# bun-ws 🌐
+# bun-ws
 
-**基于 Bun 运行时的超高性能 WebSocket 代理服务器**
+基于 Bun 运行时的 WebSocket 代理工具集：
 
-一个轻量级、高性能的 WebSocket 代理服务器，支持 VLESS 和 Trojan 协议，具有企业级安全保护和优雅的深色主题界面。
+- **`server/`** — VLESS-over-WebSocket 代理服务器（原项目）。
+- **`client/`** — 独立的 VLESS 客户端，在本地提供 SOCKS5 / SOCKS4 / HTTP 代理，通过 JSON 配置文件启动。
+- **`scripts/`** — 本地集成测试（keepalive、echo、HTTP 代理、大流量传输）。
 
-## ✨ 功能特性
+## 环境要求
 
-- **🚀 双协议支持**: VLESS 和 Trojan 双协议无缝切换
-- **⚡ 超高性能**: 基于 Bun 运行时，提供卓越的性能表现
-- **🎨 深色主题界面**: 现代设计，护眼舒适
-- **🌍 智能 ISP 检测**: 自动优化网络连接
-- **🔒 企业级安全**: TLS 加密传输，身份验证保护
-- **📱 响应式设计**: 完美适配桌面和移动设备
+- [Bun](https://bun.sh) 1.0.0 或更高版本
+- 无第三方运行时依赖
 
-## 🛠️ 快速开始
-
-### 环境要求
-- [Bun](https://bun.sh) 运行时 (版本 1.0.0 或更高)
-
-### 安装步骤
+## 快速开始
 
 ```bash
-# 安装 Bun (如果尚未安装)
+# 安装 Bun（如未安装）
 curl -fsSL https://bun.sh/install | bash
 
-# 克隆项目
 git clone https://github.com/yixunbfb/bun-ws.git
 cd bun-ws
 
 # 启动服务器
-bun run index.js
+bun run start          # 即 bun run server/index.ts
+bun run dev            # 监听文件变化自动重启
+
+# 启动客户端（默认读取 client/config.json）
+bun run client
 ```
 
-### 环境变量配置
+## 服务器
+
+### 环境变量
 
 | 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PORT` | `8333` | 服务器端口 |
-| `UUID` | `8ea48d91-eab2-4dfa-9169-859b0d43b3dc` | 身份验证 UUID |
-| `DOMAIN` | `ws.bun-ws.com` | 您的域名 |
-| `WSPATH` | UUID 前8位字符 | WebSocket 路径 |
-| `SUB_PATH` | UUID 第9-13位字符 | 订阅路径 |
-| `NAME` | `bun-ws` | 服务器显示名称 |
+| --- | --- | --- |
+| `PORT` | `8333` | 监听端口 |
+| `UUID` | `8ea48d91-eab2-4dfa-9169-859b0d43b3dc` | 身份验证 UUID（VLESS ID） |
+| `WSPATH` | UUID 前 8 位 | WebSocket 路径 |
 
-## 📖 使用说明
+复制 `.env.example` 为 `.env` 后按需修改。
 
-1. **启动服务器**:
-   ```bash
-   bun run index.js
-   ```
+### 接口
 
-2. **访问 Web 界面**:
-   在浏览器中打开 `http://localhost:8333`
+- `GET /health` — 健康检查（`200 ok`）
+- `WS /<WSPATH>` — VLESS-over-WebSocket 代理入口
 
-3. **获取订阅链接**:
-   访问 `http://localhost:8333/您的订阅路径` 获取 Base64 编码的订阅链接
+服务器仅支持 VLESS TCP 请求，不再提供订阅接口，也不再支持 Trojan。
 
-## 🔧 配置说明
+## 客户端
 
-服务器会自动检测您的 ISP 并生成相应的订阅链接。在生产环境中，请通过环境变量配置您的域名和路径。
+客户端是单文件脚本 `client/bun-vlessclient.ts`，通过 WebSocket 连接 VLESS 服务器，
+并在 `local_port` 上提供本地 SOCKS5 代理（同时自动识别 SOCKS4/SOCKS4a 与 HTTP 代理）。
 
-### 自定义配置示例
+### 配置文件
+
+默认加载 `client/config.json`。先复制示例再修改：
 
 ```bash
-# 设置自定义端口
-export PORT=8080
-
-# 设置自定义 UUID
-export UUID="your-custom-uuid-here"
-
-# 设置自定义域名
-export DOMAIN="your-domain.com"
-
-# 设置自定义路径
-export WSPATH="custom-path"
-export SUB_PATH="custom-sub"
-
-# 设置服务器名称
-export NAME="my-server"
-
-# 启动服务器
-bun run index.js
+cp client/config.example.json client/config.json
 ```
 
-## 🚀 部署指南
+```jsonc
+{
+  "log_level": "info",              // debug | info | warn | error | none
+  "local_port": 1080,               // 本地代理端口
+  "timeout": 20000,                 // WebSocket 连接超时（毫秒）
+  "ws_ping_interval": 30,           // WS ping 间隔（秒，0 为关闭）
+  "ws_app_keepalive_interval": 25,  // 数据帧 keepalive 间隔（秒，0 为关闭）
+  "remote": {
+    "host": "example.com",
+    "port": 443,
+    "uuid": "00000000-0000-4000-8000-000000000000",
+    "packet_encoding": "xudp"
+  },
+  "tls": {
+    "enabled": true,
+    "server_name": "example.com",
+    "insecure": false
+  },
+  "transport": {
+    "type": "ws",
+    "path": "/your-websocket-path",
+    "host": "example.com"
+  }
+}
+```
 
-### GitHub Pages (仅 Web 界面)
-Web 界面会在每次推送到 main 分支时自动部署到 GitHub Pages。
+所有配置项均可用环境变量覆盖（`REMOTE_HOST`、`REMOTE_PORT`、`UUID`、
+`WS_PATH`、`WS_HOST`、`TLS`、`TLS_SERVER_NAME`、`TLS_INSECURE`、
+`LOCAL_PORT`、`TIMEOUT`、`LOG_LEVEL`、`WS_PING_INTERVAL`、
+`WS_APP_KEEPALIVE_INTERVAL`）。
 
-### 自托管服务器部署
-将完整服务器部署到您的基础设施：
+### 使用
 
 ```bash
-# 生产环境部署
-export NODE_ENV=production
-export DOMAIN="your-domain.com"
-bun run index.js
+bun run client
+# 指定配置文件
+bun run client/bun-vlessclient.ts -c /path/to/config.json
+# 帮助 / 版本
+bun run client/bun-vlessclient.ts --help
+bun run client/bun-vlessclient.ts --version
 ```
 
-### Docker 部署 (推荐)
+然后把浏览器或应用的代理指向 `socks5://127.0.0.1:1080`（或配置的端口）。
 
-项目提供了基于 `oven/bun:alpine` 的轻量级 Docker 镜像：
-
-```dockerfile
-# 构建镜像
-docker build -t bun-ws .
-
-# 运行容器
-docker run -d \
-  --name bun-ws \
-  -p 8333:8333 \
-  -e DOMAIN="your-domain.com" \
-  -e UUID="your-custom-uuid" \
-  -e WSPATH="custom-ws-path" \
-  -e SUB_PATH="custom-sub-path" \
-  --restart unless-stopped \
-  bun-ws
-```
-
-#### 使用 Docker Hub 镜像
+### 编译为独立可执行文件（可选）
 
 ```bash
-# 拉取最新镜像
-docker pull yixunbfb/bun-ws:latest
-
-# 运行容器
-docker run -d \
-  --name bun-ws \
-  -p 8333:8333 \
-  -e DOMAIN="your-domain.com" \
-  --restart unless-stopped \
-  yixunbfb/bun-ws:latest
+bun build client/bun-vlessclient.ts --compile --outfile bvc
+./bvc -c config.json
 ```
 
-#### 使用 GitHub Container Registry
-
-```bash
-# 拉取镜像
-docker pull ghcr.io/yixunbfb/bun-ws:latest
-
-# 运行容器
-docker run -d \
-  --name bun-ws \
-  -p 8333:8333 \
-  -e DOMAIN="your-domain.com" \
-  ghcr.io/yixunbfb/bun-ws:latest
-```
-
-#### Docker Compose 部署
-
-创建 `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  bun-ws:
-    image: yixunbfb/bun-ws:latest
-    container_name: bun-ws
-    ports:
-      - "8333:8333"
-    environment:
-      - PORT=8333
-      - DOMAIN=your-domain.com
-      - UUID=your-custom-uuid
-      - WSPATH=custom-ws-path
-      - SUB_PATH=custom-sub-path
-      - NAME=bun-ws-server
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8333/"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-```
-
-启动服务：
-```bash
-docker-compose up -d
-docker-compose logs -f bun-ws
-```
-
-#### ARM64 设备部署 (如树莓派)
-
-```bash
-# 拉取 ARM64 镜像
-docker pull ghcr.io/yixunbfb/bun-ws:latest-arm64
-
-# 或从源码构建
-docker build -t bun-ws:arm64 --platform linux/arm64 .
-```
-
-### Systemd 服务 (Linux)
-
-创建 `/etc/systemd/system/bun-ws.service`：
-
-```ini
-[Unit]
-Description=Bun WebSocket 代理服务器
-After=network.target
-
-[Service]
-Type=simple
-User=bun-ws
-WorkingDirectory=/opt/bun-ws
-Environment=NODE_ENV=production
-ExecStart=/usr/local/bin/bun run index.js
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启用并启动服务：
-```bash
-sudo systemctl enable bun-ws
-sudo systemctl start bun-ws
-```
-
-## 📁 项目结构
+## 项目结构
 
 ```
 bun-ws/
-├── index.js              # 主服务器应用程序
-├── public/               # 静态 Web 资源
-│   └── index.html        # Web 界面 (深色主题)
-├── .github/workflows/    # GitHub Actions 自动化
-│   └── deploy.yml        # CI/CD 工作流
-├── package.json          # 项目元数据和脚本
-├── README.md             # 英文文档
-└── README.zh.md          # 中文文档
+├── server/index.ts              # VLESS WebSocket 代理服务器
+├── client/
+│   ├── bun-vlessclient.ts       # VLESS 客户端 + 本地 SOCKS/HTTP 代理
+│   ├── config.example.json      # 可提交的配置模板
+│   └── config.json              # 本地配置（已 gitignore）
+├── scripts/                     # 本地集成测试
+├── Dockerfile / docker-compose.yml
+├── bun-ws.service               # systemd 服务示例
+└── package.json
 ```
 
-## 🤝 贡献指南
-
-欢迎贡献！请随时提交问题、功能请求或拉取请求。
-
-### 贡献步骤
-
-1. Fork 本项目
-2. 创建您的功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交您的更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建拉取请求
-
-## 📄 许可证
-
-Apache License 2.0 - 请参阅 [LICENSE](LICENSE) 文件获取详情。
-
-## 🔗 相关链接
-
-- **网站**: [GitHub Pages](https://yixunbfb.github.io/bun-ws)
-- **仓库**: [GitHub](https://github.com/yixunbfb/bun-ws)
-- **Bun 运行时**: [bun.sh](https://bun.sh)
-- **问题反馈**: [Issues](https://github.com/yixunbfb/bun-ws/issues)
-- **讨论社区**: [Discussions](https://github.com/yixunbfb/bun-ws/discussions)
-
-## 📚 API 参考
-
-### 端点说明
-
-服务器提供以下端点：
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/` | GET | 深色主题 Web 界面 |
-| `/${SUB_PATH}` | GET | 订阅端点 (Base64 编码) |
-| `/${WSPATH}` | WS | WebSocket 代理端点 |
-
-### 订阅格式
-
-订阅链接返回 Base64 编码的配置信息，包含：
-
-- **VLESS 协议配置**: 轻量级代理协议
-- **Trojan 协议配置**: TLS 安全代理协议
-
-客户端会自动识别支持的协议。
-
-## 🛡️ 安全建议
-
-1. **UUID 安全**: 生产环境中请更改默认 UUID
-2. **域名配置**: 使用您自己的域名而非默认值
-3. **防火墙设置**: 仅暴露必要的端口
-4. **定期更新**: 保持 Bun 运行时为最新版本
-
-## 🔧 故障排除
-
-### 端口被占用
-```bash
-# 查找占用端口的进程
-lsof -i :8333
-
-# 终止进程
-kill -9 <进程ID>
-```
-
-### WebSocket 连接问题
-- 确保配置了正确的 WebSocket 路径
-- 如果从不同域名访问，检查 CORS 设置
-- 验证 TLS 证书的有效性
-
-### 性能问题
-- 监控内存使用: `bun --inspect index.js`
-- 检查网络带宽
-- 考虑使用 nginx 等反向代理
-
-## 📊 监控和维护
-
-### 日志监控
-
-服务器输出到 stdout/stderr，可以使用以下方式监控：
+## 常用命令
 
 ```bash
-# 查看实时日志
-tail -f /var/log/bun-ws.log
-
-# 健康检查
-curl -f http://localhost:8333/ || echo "服务器已关闭"
+bun run start   # 启动代理服务器
+bun run dev     # 热重载启动
+bun run client  # 启动 VLESS 客户端
+bun run build   # 打包服务器到 ./dist
+bun test        # 运行测试
+bun run lint    # Biome 代码检查
 ```
 
-### 性能优化建议
+集成测试脚本：
 
-1. **内存优化**: 监控内存使用情况，及时调整配置
-2. **网络优化**: 根据 ISP 检测结果选择最优线路
-3. **并发优化**: 调整 Bun 的并发设置以适应高负载
+```bash
+bun run test:echo       # VLESS echo 往返
+bun run test:keepalive  # 应用层 keepalive
+bun run test:http       # HTTP 代理大 POST（回归测试）
+bun run test:transfer   # 256 MiB 传输完整性测试
+```
 
-## 🙏 致谢
+### HTTP 代理说明
 
-- [Bun](https://bun.sh) - 超快的 JavaScript 运行时
-- [V2Ray](https://www.v2ray.com/) - 强大的代理协议
-- [GitHub Actions](https://github.com/features/actions) - CI/CD 自动化
+一个本地 HTTP 代理连接只对应一条 VLESS 隧道。对于普通 HTTP 请求，客户端会把请求
+改写为 origin-form、移除 `Proxy-Connection`、强制 `Connection: close`，并在源站
+完成响应后关闭本地连接；客户端（包括 git/curl）会为下一个请求重新建立连接。这样
+既能避免 keep-alive 请求被转发到错误的目标，也能避免在 WebSocket 握手期间到达的
+请求体被误判为新的 HTTP 请求。
 
-## 📈 统计信息
+## Docker
 
-![GitHub stars](https://img.shields.io/github/stars/yixunbfb/bun-ws)
-![GitHub forks](https://img.shields.io/github/forks/yixunbfb/bun-ws)
-![GitHub issues](https://img.shields.io/github/issues/yixunbfb/bun-ws)
-![License](https://img.shields.io/github/license/yixunbfb/bun-ws)
+```bash
+docker build -t bun-ws .
+docker run -d --name bun-ws -p 8333:8333 --env-file .env bun-ws
+```
 
----
+也可以直接使用 `docker-compose up -d` 运行已发布的镜像。
 
-用 ❤️ 由 Bun 制作 | Apache License 2.0
+## systemd
+
+参考 `bun-ws.service`，按实际情况修改 `WorkingDirectory`、`EnvironmentFile`
+和 Bun 的可执行文件路径，然后安装到 `/etc/systemd/system/`：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now bun-ws
+```
+
+## 安全建议
+
+- 对外暴露服务器前务必更换默认 UUID。
+- `.env` 与 `client/config.json` 包含敏感信息，已被 gitignore，请勿提交。
+- 只开放必要端口；需要时通过反向代理终止 TLS。
+
+## 许可证
+
+Apache License 2.0 — 详见 [LICENSE](LICENSE)。

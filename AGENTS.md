@@ -4,15 +4,21 @@ This document provides guidelines for AI coding agents working on the bun-ws pro
 
 ## Project Overview
 
-bun-ws is a high-performance WebSocket proxy server built on Bun runtime with VLESS/Trojan protocol support. It's a JavaScript ES modules project using native Bun APIs.
+bun-ws is a high-performance WebSocket proxy server built on Bun runtime with VLESS protocol support, plus a standalone VLESS client with a local SOCKS5/SOCKS4/HTTP proxy. It's a JavaScript/TypeScript ES modules project using native Bun APIs.
+
+The repository is split into two parts:
+- `server/` — the proxy server (`server/index.ts`)
+- `client/` — the VLESS client (`client/bun-vlessclient.ts`) and its JSON config
 
 ## Build, Lint, and Test Commands
 
 ### Core Commands
 ```bash
-bun run start       # Start production server
+bun run start       # Start production server (server/index.ts)
 bun run dev         # Start server with hot reload (watch mode)
-bun run build       # Check build status (static files in public/)
+bun run client      # Start VLESS client with client/config.json
+bun run test:http   # HTTP proxy large-POST regression test
+bun run build       # Bundle the server into ./dist
 bun test            # Run all tests
 bun test <file>     # Run specific test file
 bun test <pattern>  # Run tests matching pattern
@@ -36,15 +42,14 @@ bunx @biomejs/biome check .  # Run Biome linter
 - Use ES modules (`import`/`export`) exclusively
 - Group imports: Bun stdlib → External packages → Local modules
 - Use absolute paths for Bun stdlib (e.g., `import { serve } from "bun"`)
-- Use relative paths for local imports (e.g., `import db from "./db.js"`)
+- Use relative paths for local imports (e.g., `import { createVlessHeader } from "./vless.js"`)
 
 Example:
 ```javascript
 import { serve } from "bun";
 import { join } from "path";
 import { createHash } from "crypto";
-import { connect } from "net";
-import db from "./db.js";
+import { createVlessHeader } from "./vless.js";
 ```
 
 ### Naming Conventions
@@ -109,15 +114,15 @@ Key Biome rules:
 ### File Organization
 - Keep related functionality in the same file
 - Export functions at the bottom or with explicit `export` keywords
-- Use `index.js` as the entry point
-- Put database utilities in `db.js`
-- Static assets go in `public/` directory
+- Put server code under `server/` and client code under `client/`
+- Client configuration lives in `client/config.json` (gitignored); keep `client/config.example.json` in sync
 
 ### Testing
 - Create test files with `.test.js` extension
 - Use Bun's built-in test runner
 - Group related tests with `describe()` blocks
 - Test both success and error cases
+- End-to-end proxy scripts live in `scripts/` and are run directly, e.g. `bun run test:keepalive`, `bun run test:http`, `bun run test:transfer`
 
 ### Git Workflow
 - Write clear commit messages describing the "why"
@@ -128,19 +133,17 @@ Key Biome rules:
 ## Environment Variables
 
 The project uses these environment variables (see `.env`):
-- `UUID`: VLESS/Trojan user ID
-- `DOMAIN`: Server domain
+- `UUID`: VLESS user ID
 - `WSPATH`: WebSocket path component
-- `SUB_PATH`: Subscription path
 - `PORT`: Server port (default: 8333)
-- `AI_API_URL`, `AI_API_KEY`, `AI_MODEL`: AI API configuration
 
 ## Key Files
 
-- `index.js`: Main server entry point and WebSocket handling
-- `db.js`: SQLite database utilities and user management
-- `public/`: Static frontend files
-- `bun-ws.db`: SQLite database file
+- `server/index.ts`: Server entry point and WebSocket handling
+- `client/bun-vlessclient.ts`: VLESS client with local SOCKS/HTTP proxy
+- `client/config.json`: Client configuration (local, gitignored)
+- `client/config.example.json`: Client configuration template
+- `scripts/`: Integration test scripts
 
 ## Common Patterns
 

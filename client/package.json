@@ -1,0 +1,13 @@
+{
+	"name": "bun-vlessclient",
+	"version": "1.0.0",
+	"description": "Bun-native VLESS client with a local SOCKS5/SOCKS4/HTTP proxy",
+	"type": "module",
+	"bin": {
+		"bvc": "./bun-vlessclient.ts"
+	},
+	"scripts": {
+		"start": "bun run bun-vlessclient.ts"
+	},
+	"license": "Apache-2.0"
+}

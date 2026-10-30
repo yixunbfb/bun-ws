@@ -1,0 +1,18 @@
+# Dependencies / build output
+node_modules
+dist
+
+# Local configuration and runtime data
+.env
+.env.*
+!.env.example
+client/config.json
+data
+
+# Tooling and VCS
+.git
+.github
+.claude
+.vscode
+*.log
+*.exe

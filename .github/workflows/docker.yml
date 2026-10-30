@@ -101,7 +101,7 @@ jobs:
         
         ### Run Command
         ```bash
-        docker run -p 8333:8333 -e DOMAIN="your-domain.com" ghcr.io/${{ github.repository }}:latest
+        docker run -p 8333:8333 -e UUID="your-uuid" ghcr.io/${{ github.repository }}:latest
         ```
         EOF
 

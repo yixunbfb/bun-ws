@@ -8,8 +8,8 @@ User=bun-ws-user
 Group=bun-ws-user
 EnvironmentFile=/home/StXh/ws/.env
 WorkingDirectory=/home/StXh/ws
-ExecStart=/home/StXh/.bun/bin/bun run ./server.js
-ExecStop=pkill -f "bun run ./server.js"
+ExecStart=/home/StXh/.bun/bin/bun run ./server/index.ts
+ExecStop=pkill -f "bun run ./server/index.ts"
 Restart=always
 
 [Install]

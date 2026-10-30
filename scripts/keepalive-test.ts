@@ -52,7 +52,7 @@ async function main() {
 	});
 	await Bun.sleep(100);
 
-	const proc = Bun.spawn(["bun", "run", "index.ts"], {
+	const proc = Bun.spawn(["bun", "run", "server/index.ts"], {
 		env: { ...process.env, PORT: String(PROXY_PORT), UUID, WSPATH },
 		stdout: "inherit",
 		stderr: "inherit",

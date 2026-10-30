@@ -14,7 +14,7 @@ services:
     # 3. Port mapping (host_port:container_port)
     # This will map the host's port 4433 to the container's internal port 8333.
     # You can adjust the host port as needed (e.g., 443).
-    # The internal container port must be consistent with the PORT environment variable in index.js or its default value (8333).
+    # The internal container port must be consistent with the PORT environment variable in server/index.ts or its default value (8333).
     ports:
       - "4433:8333"
 
