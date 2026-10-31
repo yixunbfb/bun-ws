@@ -46,6 +46,8 @@ interface WsData {
 	tcpPaused: boolean;
 	/** True while WS -> TCP writes are blocked by TCP backpressure. */
 	wsPaused: boolean;
+	/** True while the client asked us to stop reading from the origin. */
+	flowPaused: boolean;
 	/** Buffered chunks waiting for the TCP socket to drain. */
 	tcpWriteQueue: Uint8Array[];
 	tcpWriteQueuedBytes: number;
@@ -58,6 +60,7 @@ function newWsData(): WsData {
 		socket: null,
 		tcpPaused: false,
 		wsPaused: false,
+		flowPaused: false,
 		tcpWriteQueue: [],
 		tcpWriteQueuedBytes: 0,
 		established: false,
@@ -230,6 +233,14 @@ async function establishTcpConnection(
 					}
 					// Early data that arrived while the connect was in progress.
 					flushTcpQueue(ws, socket);
+
+					// The client may already be backed up (e.g. it asked us to
+					// pause before the TCP connect finished).
+					if ((ws.data as WsData).flowPaused) {
+						try {
+							socket.pause();
+						} catch {}
+					}
 				},
 				data: (socket: any, data: Uint8Array) => {
 					forwardTcpToWs(ws, socket, data);
@@ -412,6 +423,21 @@ serve({
 					const obj = JSON.parse(msg);
 					if (obj?.type === "keepalive") {
 						ws.send(JSON.stringify({ type: "keepalive", pong: true }));
+						return;
+					}
+					// End-to-end flow control: the client asks us to stop reading
+					// from the origin when its local write queue is backed up,
+					// because a WebSocket has no receive window of its own.
+					if (obj?.type === "flow") {
+						const paused = obj.paused === true;
+						if (wsd.flowPaused !== paused) {
+							wsd.flowPaused = paused;
+							if (wsd.socket) {
+								try {
+									paused ? wsd.socket.pause() : wsd.socket.resume();
+								} catch {}
+							}
+						}
 						return;
 					}
 				} catch {}

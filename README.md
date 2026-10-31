@@ -145,6 +145,7 @@ Integration scripts:
 bun run test:echo       # VLESS echo round-trip
 bun run test:keepalive  # application-level keepalive
 bun run test:http       # HTTP proxy large POST (regression test)
+bun run test:flow       # end-to-end flow control with a slow consumer
 bun run test:transfer   # 256 MiB transfer with integrity check
 ```
 
@@ -157,6 +158,16 @@ once the origin finishes the response. Clients (including git/curl) then
 reconnect for the next request. This avoids routing keep-alive requests to the
 wrong host and prevents request bodies that arrive during the WebSocket
 handshake from being mis-parsed.
+
+### Flow control
+
+A WebSocket has no receive window, so a slow local consumer (git unpacking a
+packfile, a browser writing to disk) cannot throttle the origin by itself. When
+the client has more than 8 MiB waiting for the local socket, it sends a
+`{"type":"flow","paused":true}` control frame; the server pauses reading from
+the origin TCP socket until the client drops below 2 MiB and sends
+`paused:false`. Without this, large transfers eventually hit the in-memory queue
+cap and get disconnected.
 
 ## Docker
 

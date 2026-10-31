@@ -143,6 +143,7 @@ bun run lint    # Biome 代码检查
 bun run test:echo       # VLESS echo 往返
 bun run test:keepalive  # 应用层 keepalive
 bun run test:http       # HTTP 代理大 POST（回归测试）
+bun run test:flow       # 慢消费者下的端到端流控
 bun run test:transfer   # 256 MiB 传输完整性测试
 ```
 
@@ -153,6 +154,14 @@ bun run test:transfer   # 256 MiB 传输完整性测试
 完成响应后关闭本地连接；客户端（包括 git/curl）会为下一个请求重新建立连接。这样
 既能避免 keep-alive 请求被转发到错误的目标，也能避免在 WebSocket 握手期间到达的
 请求体被误判为新的 HTTP 请求。
+
+### 流量控制
+
+WebSocket 没有接收窗口，本地消费者变慢时（git 解包、浏览器写盘）无法通过 TCP
+反压让源站减速。客户端在本地待写数据超过 8 MiB 时发送
+`{"type":"flow","paused":true}` 控制帧，服务端据此暂停读取源站 TCP；待积压降到
+2 MiB 以下再发送 `paused:false` 恢复。没有这层控制时，大文件传输最终会撞上内存
+队列上限而被断开。
 
 ## Docker
 

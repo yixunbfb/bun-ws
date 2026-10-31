@@ -12,6 +12,7 @@
 		"test:echo": "bun run scripts/min-echo-test.ts",
 		"test:keepalive": "bun run scripts/keepalive-test.ts",
 		"test:http": "bun run scripts/http-proxy-test.ts",
+		"test:flow": "bun run scripts/flow-control-test.ts",
 		"test:transfer": "bun run scripts/large-transfer-test.ts",
 		"lint": "bunx @biomejs/biome check .",
 		"build": "bun build server/index.ts --outdir ./dist --target bun --minify"

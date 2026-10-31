@@ -170,6 +170,20 @@ const LOCAL_WRITE_QUEUE_MAX = 64 * 1024 * 1024; // 64 MiB
 const WS_MSG_QUEUE_MAX = 64 * 1024 * 1024; // 64 MiB
 /** Maximum size of a single outgoing WebSocket message. */
 const WS_SEND_CHUNK = 64 * 1024; // 64 KiB
+
+/**
+ * End-to-end flow control thresholds.
+ *
+ * A WebSocket has no receive window, so a slow local consumer (a browser
+ * writing to disk, git decompressing a packfile) cannot slow the origin down
+ * on its own: the proxy keeps pulling at network speed until the client's
+ * buffers are full and it has to kill the connection. When the client's
+ * pending WS -> local bytes pass the high-water mark it sends a control frame
+ * asking the proxy to pause reading from the origin, and resumes once the
+ * backlog has drained.
+ */
+const FLOW_PAUSE_HIGH = 8 * 1024 * 1024; // 8 MiB
+const FLOW_RESUME_LOW = 2 * 1024 * 1024; // 2 MiB
 /** WebSocket keepalive ping interval in seconds (0 = disabled). */
 const WS_PING_INTERVAL = cfgNum('ws_ping_interval', 'WS_PING_INTERVAL', 30);
 /** App-level keepalive interval in seconds (0 = disabled). Sends a DATA frame
@@ -227,6 +241,71 @@ function clearAppPingTimer(session: Session) {
     }
 }
 
+/**
+ * Debug helper: log end-to-end flow state so a stalled transfer can be
+ * diagnosed (is the local consumer slow, or is the WS side overrunning us?).
+ */
+function logFlow(session: Session, tag: string) {
+    const now = Date.now();
+    const dt = Math.max(1, now - session.lastFlowLogAt) / 1000;
+    const delta = (session.bytesWrittenToLocal || 0) - (session.lastFlowBytes || 0);
+    session.lastFlowLogAt = now;
+    session.lastFlowBytes = session.bytesWrittenToLocal || 0;
+
+    log('debug',
+        `[FLOW ${tag}] ${session.destHost}:${session.destPort}` +
+        ` local=${formatBytes(delta / dt)}/s total=${formatBytes(session.bytesWrittenToLocal || 0)}` +
+        ` localQueued=${formatBytes(session.localWriteQueuedBytes || 0)}` +
+        ` wsQueued=${formatBytes(session.wsMsgQueuedBytes || 0)}` +
+        ` wsBuffered=${formatBytes((session.ws as any)?.bufferedAmount || 0)}` +
+        ` drains=${session.drains} blocked=${session.blockedWrites}`
+    );
+}
+
+function clearFlowTimer(session: Session) {
+    if (session.flowTimer) {
+        clearInterval(session.flowTimer);
+        session.flowTimer = undefined;
+    }
+}
+
+/** Bytes received from the tunnel but not yet handed to the local socket. */
+function pendingLocalBytes(session: Session): number {
+    return (session.localWriteQueuedBytes || 0) + (session.wsMsgQueuedBytes || 0);
+}
+
+/**
+ * Tell the proxy to pause/resume reading from the origin when the local
+ * consumer cannot keep up. Hysteresis avoids a control frame per message.
+ */
+function updateFlowControl(session: Session) {
+    if (session.closed) return;
+    if (!session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+
+    const queued = pendingLocalBytes(session);
+
+    if (!session.flowPaused && queued > FLOW_PAUSE_HIGH) {
+        session.flowPaused = true;
+        try {
+            session.ws.send(JSON.stringify({ type: 'flow', paused: true }));
+            log('debug', `[FLOW] pause proxy reads for ${session.destHost}:${session.destPort} (${formatBytes(queued)} queued)`);
+        } catch {
+            // ignore: the WS will fail on its own
+        }
+        return;
+    }
+
+    if (session.flowPaused && queued < FLOW_RESUME_LOW) {
+        session.flowPaused = false;
+        try {
+            session.ws.send(JSON.stringify({ type: 'flow', paused: false }));
+            log('debug', `[FLOW] resume proxy reads for ${session.destHost}:${session.destPort} (${formatBytes(queued)} queued)`);
+        } catch {
+            // ignore
+        }
+    }
+}
+
 function hasPendingLocalOutput(session: Session): boolean {
     return (
         (session.localWriteQueuedBytes || 0) > 0 ||
@@ -239,6 +318,11 @@ function hasPendingLocalOutput(session: Session): boolean {
 /** End local socket after queued WS→client bytes are flushed (or force immediately). */
 function finishLocalSocket(socket: any, session: Session, force = false) {
     if (session.closed) return;
+    log('debug',
+        `[FINISH] force=${force} pending=${hasPendingLocalOutput(session)}` +
+        ` wsQueued=${session.wsMsgQueuedBytes || 0} localQueued=${session.localWriteQueuedBytes || 0}` +
+        ` remoteClosed=${!!session.remoteClosed}`
+    );
     if (!force && hasPendingLocalOutput(session)) {
         session.remoteClosed = true;
         return;
@@ -247,6 +331,7 @@ function finishLocalSocket(socket: any, session: Session, force = false) {
     clearWsFlushTimer(session);
     clearPingTimer(session);
     clearAppPingTimer(session);
+    clearFlowTimer(session);
     try {
         socket.end();
     } catch {
@@ -258,9 +343,11 @@ function closeSession(socket: any, session: Session, reason?: string) {
     if (session.closed) return;
     if (reason) log('warn', reason);
     session.closed = true;
+    logFlow(session, 'close');
     clearWsFlushTimer(session);
     clearPingTimer(session);
     clearAppPingTimer(session);
+    clearFlowTimer(session);
     try {
         session.ws?.close();
     } catch {
@@ -301,13 +388,15 @@ function writeToLocalSocket(socket: any, session: Session, data: Uint8Array): vo
         return;
     }
 
-    // Bun: full write returns byte length; blocked may return -1 or partial count
+    // Bun: full write returns byte length; 0 means "nothing accepted, retry on drain"
     if (written === data.length) {
         session.bytesReceivedFromWs = (session.bytesReceivedFromWs || 0) + data.length;
+        session.bytesWrittenToLocal = (session.bytesWrittenToLocal || 0) + data.length;
         return;
     }
 
     if (written === -1 || written == null || written === 0) {
+        session.blockedWrites = (session.blockedWrites || 0) + 1;
         session.localWriteQueue = [data];
         session.localWriteQueuedBytes = data.length;
         return;
@@ -315,6 +404,7 @@ function writeToLocalSocket(socket: any, session: Session, data: Uint8Array): vo
 
     if (written > 0 && written < data.length) {
         session.bytesReceivedFromWs = (session.bytesReceivedFromWs || 0) + written;
+        session.bytesWrittenToLocal = (session.bytesWrittenToLocal || 0) + written;
         const rest = data.subarray(written);
         session.localWriteQueue = [rest];
         session.localWriteQueuedBytes = rest.length;
@@ -323,6 +413,7 @@ function writeToLocalSocket(socket: any, session: Session, data: Uint8Array): vo
 
     // Unexpected return value — treat as full success to avoid silent stall
     session.bytesReceivedFromWs = (session.bytesReceivedFromWs || 0) + data.length;
+    session.bytesWrittenToLocal = (session.bytesWrittenToLocal || 0) + data.length;
 }
 
 function flushLocalWriteQueue(socket: any, session: Session): void {
@@ -346,18 +437,22 @@ function flushLocalWriteQueue(socket: any, session: Session): void {
 
         if (written < chunk.length) {
             session.bytesReceivedFromWs = (session.bytesReceivedFromWs || 0) + written;
+            session.bytesWrittenToLocal = (session.bytesWrittenToLocal || 0) + written;
             session.localWriteQueue[0] = chunk.subarray(written);
             session.localWriteQueuedBytes -= written;
             return;
         }
 
         session.bytesReceivedFromWs = (session.bytesReceivedFromWs || 0) + chunk.length;
+        session.bytesWrittenToLocal = (session.bytesWrittenToLocal || 0) + chunk.length;
         session.localWriteQueue.shift();
         session.localWriteQueuedBytes -= chunk.length;
     }
 
     session.localWriteQueue = undefined;
     session.localWriteQueuedBytes = 0;
+
+    updateFlowControl(session);
 
     // Remote already closed: finish once every queued byte has been written
     if (session.remoteClosed && !hasPendingLocalOutput(session)) {
@@ -379,6 +474,7 @@ function enqueueWsMessage(socket: any, session: Session, payload: Uint8Array): v
         return;
     }
     processWsMessageQueue(socket, session);
+    updateFlowControl(session);
 }
 
 function processWsMessageQueue(socket: any, session: Session): void {
@@ -405,6 +501,8 @@ function processWsMessageQueue(socket: any, session: Session): void {
     } finally {
         session.wsMsgProcessing = false;
     }
+
+    updateFlowControl(session);
 }
 
 function handleWsPayload(socket: any, session: Session, normalized: Uint8Array): void {
@@ -436,14 +534,12 @@ function handleWsPayload(socket: any, session: Session, normalized: Uint8Array):
 
         const payload = normalized.subarray(2);
         if (payload.length > 0) {
-            log('debug', `[WS→SOCKET] writing ${payload.length} bytes to local socket`);
             writeToLocalSocket(socket, session, payload);
         }
         return;
     }
 
     if (normalized.length > 0) {
-        log('debug', `[WS→SOCKET] writing ${normalized.length} bytes to local socket`);
         writeToLocalSocket(socket, session, normalized);
     }
 
@@ -636,6 +732,15 @@ interface Session {
     lastPongTime?: number;
     /** Whether the data-warning has been logged for this session. */
     dataWarnLogged?: boolean;
+    /** Timers used for flow-control bookkeeping. */
+    flowTimer?: ReturnType<typeof setInterval>;
+    drains: number;
+    blockedWrites: number;
+    bytesWrittenToLocal: number;
+    lastFlowLogAt: number;
+    lastFlowBytes: number;
+    /** True while we asked the proxy to pause reading from the origin. */
+    flowPaused?: boolean;
 }
 
 /**
@@ -675,6 +780,7 @@ class BunVLESSClient {
             drain(socket: any) {
                 const session = socket.data as unknown as Session;
                 if (!session || session.closed) return;
+                session.drains = (session.drains || 0) + 1;
                 flushLocalWriteQueue(socket, session);
                 processWsMessageQueue(socket, session);
                 if (session.remoteClosed && !session.closed && !hasPendingLocalOutput(session)) {
@@ -694,6 +800,11 @@ class BunVLESSClient {
                     wsMsgQueuedBytes: 0,
                     wsMsgProcessing: false,
                     wsSendQueuedBytes: 0,
+                    drains: 0,
+                    blockedWrites: 0,
+                    bytesWrittenToLocal: 0,
+                    lastFlowLogAt: Date.now(),
+                    lastFlowBytes: 0,
                     closed: false,
                     lastPongTime: 0,
                     dataWarnLogged: false,
@@ -702,6 +813,12 @@ class BunVLESSClient {
             close(socket: any) {
                 const session = socket.data as unknown as Session;
                 if (!session) return;
+                log('debug',
+                    `[LOCAL CLOSE] ${session.destHost || '?'}:${session.destPort || '?'}` +
+                    ` pending=${hasPendingLocalOutput(session)}` +
+                    ` wsQueued=${session.wsMsgQueuedBytes || 0} localQueued=${session.localWriteQueuedBytes || 0}` +
+                    ` remoteClosed=${!!session.remoteClosed}`
+                );
                 session.closed = true;
                 if (session.wsFlushTimer) {
                     clearInterval(session.wsFlushTimer);
@@ -1205,6 +1322,16 @@ async function establishVlessConnection(
             const vlessHeader = createVlessHeader(port, vlessAType, addrPortBuf);
             ws.send(vlessHeader);
 
+            // Periodic flow diagnostics: shows whether the local consumer
+            // (browser/git) is slower than the tunnel, i.e. no end-to-end
+            // flow control.
+            session.lastFlowLogAt = Date.now();
+            session.lastFlowBytes = 0;
+            session.flowTimer = setInterval(() => {
+                updateFlowControl(session);
+                logFlow(session, 'tx');
+            }, 2000);
+
             if (session.pendingData && session.pendingData.length > 0) {
                 const earlyData = session.pendingData;
                 session.pendingData = undefined;
@@ -1250,6 +1377,7 @@ async function establishVlessConnection(
         ws.onclose = (event) => {
             clearPingTimer(session);
             clearAppPingTimer(session);
+            clearFlowTimer(session);
             const sent = session.bytesSentToWs ?? 0;
             const recv = session.bytesReceivedFromWs ?? 0;
             const queued =
